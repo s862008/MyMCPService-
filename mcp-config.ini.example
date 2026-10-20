@@ -14,9 +14,9 @@ transport = stdio
 [database]
 host = localhost
 port = 3050
-path = B:\bdtest\TESTBASE.FDB
-user = SYSDBA
-password = masterkey
+path = 
+user = 
+password = 
 dialect = 1
 charset = UTF8
 
