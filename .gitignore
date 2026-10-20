@@ -1,0 +1,33 @@
+# --- Сборка Maven ---
+target/
+*.class
+*.jar
+*.war
+*.ear
+dependency-reduced-pom.xml
+
+# --- Логи ---
+logs/
+*.log
+
+# --- Конфигурация с секретами ---
+# mcp-config.ini содержит пароль к БД — не коммитим.
+# В VCS держим только шаблон mcp-config.ini.example
+mcp-config.ini
+application.properties
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+.vscode/
+.settings/
+.project
+.classpath
+
+# --- ОС ---
+.DS_Store
+Thumbs.db
+desktop.ini

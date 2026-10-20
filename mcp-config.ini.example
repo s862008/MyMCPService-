@@ -1,0 +1,41 @@
+; ============================================================
+;  Firebird MCP Server — ШАБЛОН конфигурационного файла
+;  Скопируйте этот файл в mcp-config.ini и заполните значения.
+;
+;  Расположение: рядом с jar-файлом.
+;  Путь можно указать: -Dconfig.file=C:\my\path\mcp-config.ini
+; ============================================================
+
+; ---------- Основной режим работы ----------
+[server]
+transport = stdio
+
+; ---------- База данных Firebird 3 ----------
+[database]
+host = localhost
+port = 3050
+path = B:\bdtest\TESTBASE.FDB
+user = SYSDBA
+password = masterkey
+dialect = 1
+charset = UTF8
+
+; ---------- HTTP / SSE транспорт (transport = http) ----------
+[http]
+host = 0.0.0.0
+port = 8080
+mcp_path = /mcp
+sse_path = /sse
+health_path = /health
+cors_origins = *
+thread_pool_size = 4
+
+; ---------- Stdio транспорт (transport = stdio) ----------
+[stdio]
+encoding = UTF-8
+
+; ---------- Прочие параметры ----------
+[app]
+log_dir = logs
+max_query_rows = 10000
+max_proc_rows = 1000
