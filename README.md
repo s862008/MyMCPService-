@@ -17,7 +17,7 @@ MCP (Model Context Protocol) сервер на Java 11 для работы с б
 
 ```
 myMCPService/
-├── pom.xml                          — Maven: Jaybird 4.0.1, Gson 2.10.1, Logback
+├── pom.xml                          — Maven: Jaybird 5.0.13.java11, Gson 2.10.1, Logback
 ├── mcp-config.ini                   — Основной конфигурационный файл (INI)
 ├── README.md                        — Полная документация
 ├── .gitignore
@@ -73,6 +73,8 @@ JSON-RPC сообщения передаются через stdin/stdout.
 cd D:\PROJECTS\test\myMCPService
 
 # Сборка jar с зависимостями (maven-shade-plugin)
+set JAVA_HOME=C:\Program Files\Java\jdk-11.0.13.8-hotspot
+set PATH=%JAVA_HOME%\bin;%PATH%
 mvn clean package
 
 # Итоговый файл: target/firebird-mcp-server.jar (~15-20 MB с shaded зависимостями)
@@ -276,7 +278,7 @@ java -jar target/firebird-mcp-server.jar
 
 | Зависимость | Версия | Назначение |
 |---|---|---|
-| `jaybird` | 4.0.1 | JDBC-драйвер Firebird (Jaybird) |
+| `jaybird` | 5.0.13.java11 | JDBC-драйвер Firebird (Jaybird) |
 | `gson` | 2.10.1 | JSON-сериализация/десериализация |
 | `slf4j-api` | 2.0.9 | API логирования |
 | `logback-classic` | 1.4.14 | Реализация логирования |

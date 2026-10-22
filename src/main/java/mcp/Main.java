@@ -67,33 +67,42 @@ public class Main {
     private static Config loadConfig() {
         Config config = new Config();
 
-        // --- Источник 1: mcp-config.ini (основной конфиг) ---
-        // Ищем: -Dconfig.file=... → ./mcp-config.ini → рядом с jar
-        loadIniConfig(config);
+        // --- Источник 1: mcp-config.ini (основной пользовательский конфиг) ---
+        // Ищем: -Dconfig.file=... → ./mcp-config.ini → рядом с jar.
+        // Если INI найден — он имеет приоритет над application.properties,
+        // иначе свойства из classpath (transport=stdio по умолчанию)
+        // перебили бы пользовательский выбор http.
+        boolean iniFound = loadIniConfig(config);
 
         // --- Источник 2: application.properties внутри jar (classpath) ---
-        try (java.io.InputStream input = Main.class.getClassLoader()
-                .getResourceAsStream("application.properties")) {
-            if (input != null) {
-                java.util.Properties props = new java.util.Properties();
-                props.load(input);
-                applyProperties(config, props);
-            }
-        } catch (Exception e) {
-            logger.error("Failed to load bundled config: {}", e.getMessage());
-        }
-
-        // --- Источник 3: внешний application.properties рядом с jar ---
-        java.io.File external = new java.io.File("application.properties");
-        if (external.exists()) {
-            try (java.io.InputStream input = new java.io.FileInputStream(external)) {
-                java.util.Properties props = new java.util.Properties();
-                props.load(input);
-                applyProperties(config, props);
-                logger.info("External application.properties loaded from {}", external.getAbsolutePath());
+        // Применяется ТОЛЬКО если mcp-config.ini отсутствует —
+        // это fallback для обратной совместимости со старыми установками.
+        if (!iniFound) {
+            try (java.io.InputStream input = Main.class.getClassLoader()
+                    .getResourceAsStream("application.properties")) {
+                if (input != null) {
+                    java.util.Properties props = new java.util.Properties();
+                    props.load(input);
+                    applyProperties(config, props);
+                }
             } catch (Exception e) {
-                logger.error("Failed to load external config: {}", e.getMessage());
+                logger.error("Failed to load bundled config: {}", e.getMessage());
             }
+
+            // --- Источник 3: внешний application.properties рядом с jar ---
+            java.io.File external = new java.io.File("application.properties");
+            if (external.exists()) {
+                try (java.io.InputStream input = new java.io.FileInputStream(external)) {
+                    java.util.Properties props = new java.util.Properties();
+                    props.load(input);
+                    applyProperties(config, props);
+                    logger.info("External application.properties loaded from {}", external.getAbsolutePath());
+                } catch (Exception e) {
+                    logger.error("Failed to load external config: {}", e.getMessage());
+                }
+            }
+        } else {
+            logger.debug("INI config present — skipping application.properties fallbacks");
         }
 
         // --- Источник 4: переменные окружения (высший приоритет) ---
@@ -124,8 +133,10 @@ public class Main {
     /**
      * Чтение mcp-config.ini. Порядок поиска файла:
      * 1) -Dconfig.file=<путь>; 2) ./mcp-config.ini; 3) каталог рядом с jar.
+     *
+     * @return true, если INI-файл найден и применён (тогда application.properties пропускается)
      */
-    private static void loadIniConfig(Config config) {
+    private static boolean loadIniConfig(Config config) {
         String iniPath = System.getProperty(INI_PROPERTY, DEFAULT_INI);
 
         java.io.File ini = new java.io.File(iniPath);
@@ -143,10 +154,11 @@ public class Main {
 
         if (!ini.exists()) {
             logger.info("INI config '{}' not found, using properties/env/defaults", iniPath);
-            return;
+            return false;
         }
 
         IniReader ini1 = IniReader.load(ini.getAbsolutePath());
+        logger.info("Using INI config as primary source: {}", ini.getAbsolutePath());
 
         // [server] — режим работы
         config.transport = ini1.get("server", "transport", config.transport).trim().toLowerCase();
@@ -172,6 +184,8 @@ public class Main {
         // [app] — прочее
         config.maxQueryRows  = ini1.getInt("app", "max_query_rows", config.maxQueryRows);
         config.maxProcRows   = ini1.getInt("app", "max_proc_rows", config.maxProcRows);
+
+        return true;
     }
 
     /** Копирование значений из Properties в Config (обратная совместимость). */

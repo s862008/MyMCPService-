@@ -15,7 +15,7 @@
         <gson.version>2.10.1</gson.version>
         <slf4j.version>2.0.9</slf4j.version>
         <logback.version>1.4.14</logback.version>
-        <firebird.version>4.0.1</firebird.version>
+        <firebird.version>5.0.13.java11</firebird.version>
         <shade.version>3.5.1</shade.version>
     </properties>
 
