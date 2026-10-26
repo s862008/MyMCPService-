@@ -9,9 +9,22 @@ MCP (Model Context Protocol) сервер на Java 11 для работы с б
 |---|---|
 | `sql_query` | Выполнение SELECT-запросов. Только чтение. |
 | `sql_execute` | Выполнение DML/DDL (INSERT, UPDATE, DELETE, CREATE TABLE, ALTER, DROP, EXECUTE PROCEDURE). |
-| `sql_create_procedure` | Удобная обёртка для CREATE OR ALTER PROCEDURE. |
 | `sql_list_tables` | Список пользовательских таблиц из RDB$RELATIONS. |
 | `sql_list_procedures` | Список хранимых процедур из RDB$PROCEDURES. |
+| `sql_describe_table` | Структура таблицы: колонки, типы, размеры, NOT NULL, DEFAULT. |
+| `sql_describe_procedure` | Параметры процедуры: входные/выходные, имена, типы. |
+| `sql_execute_procedure` | Вызов процедуры с параметрами, возврат RESULT SET. |
+| `sql_explain` | Валидация SELECT без возврата данных + план выполнения. |
+| `sql_create_procedure` | Обёртка CREATE OR ALTER PROCEDURE. |
+| `sql_create_view` | Обёртка CREATE OR ALTER VIEW. |
+| `sql_create_trigger` | Обёртка CREATE OR ALTER TRIGGER (BEFORE/AFTER, INSERT/UPDATE/DELETE). |
+
+### Рекомендуемый рабочий порядок для LLM
+
+1. `sql_list_tables` — что есть в базе;
+2. `sql_describe_table` — структура нужных таблиц (КОЛОНКИ И ТИПЫ);
+3. `sql_explain` — проверка сложного запроса перед выполнением;
+4. `sql_query` / `sql_execute` — выполнение.
 
 ## Архитектура
 
@@ -35,8 +48,14 @@ myMCPService/
     │           ├── SqlReadTool.java
     │           ├── SqlWriteTool.java
     │           ├── SqlProcedureTool.java
+    │           ├── SqlExecuteProcedureTool.java
     │           ├── SqlListTablesTool.java
-    │           └── SqlListProceduresTool.java
+    │           ├── SqlListProceduresTool.java
+    │           ├── SqlDescribeTableTool.java
+    │           ├── SqlDescribeProcedureTool.java
+    │           ├── SqlExplainTool.java
+    │           ├── SqlCreateViewTool.java
+    │           └── SqlCreateTriggerTool.java
     └── resources/
         ├── application.properties   — Обратная совместимость (properties-формат)
         └── logback.xml              — Логирование (в STDERR!)

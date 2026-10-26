@@ -58,11 +58,23 @@ public class McpServer {
 
     /** Регистрация всех инструментов. Здесь же задаются их имена в протоколе. */
     private void registerTools() {
+        // --- Чтение данных ---
         tools.put("sql_query", new SqlReadTool(this));
-        tools.put("sql_execute", new SqlWriteTool(this));
-        tools.put("sql_create_procedure", new SqlProcedureTool(this));
+        // --- Разведка схемы ---
         tools.put("sql_list_tables", new SqlListTablesTool(this));
         tools.put("sql_list_procedures", new SqlListProceduresTool(this));
+        tools.put("sql_describe_table", new SqlDescribeTableTool(this));
+        tools.put("sql_describe_procedure", new SqlDescribeProcedureTool(this));
+        // --- Валидация и план ---
+        tools.put("sql_explain", new SqlExplainTool(this));
+        // --- Запись данных и DDL ---
+        tools.put("sql_execute", new SqlWriteTool(this));
+        // --- Хранимые процедуры ---
+        tools.put("sql_create_procedure", new SqlProcedureTool(this));
+        tools.put("sql_execute_procedure", new SqlExecuteProcedureTool(this));
+        // --- Объекты БД (обёртки DDL) ---
+        tools.put("sql_create_view", new SqlCreateViewTool(this));
+        tools.put("sql_create_trigger", new SqlCreateTriggerTool(this));
     }
 
     /**
@@ -289,5 +301,15 @@ public class McpServer {
     /** Доступ к БД для инструментов. */
     public FirebirdDb getDb() {
         return db;
+    }
+
+    /** Лимит строк для результатов процедур (из [app] max_proc_rows). */
+    public int getMaxProcRows() {
+        return config.maxProcRows;
+    }
+
+    /** Лимит строк для SELECT (из [app] max_query_rows). */
+    public int getMaxQueryRows() {
+        return config.maxQueryRows;
     }
 }

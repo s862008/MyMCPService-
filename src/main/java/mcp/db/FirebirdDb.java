@@ -68,6 +68,15 @@ public class FirebirdDb {
     }
 
     /**
+     * Публичный доступ к соединению для инструментов, которым нужен
+     * CallableStatement (вызов хранимых процедур). Вызывающий код
+     * ОБЯЗАН закрыть соединение (try-with-resources).
+     */
+    public Connection openConnectionForTool() throws SQLException {
+        return openConnection();
+    }
+
+    /**
      * Выполнение SELECT.
      *
      * @return map с ключами:
