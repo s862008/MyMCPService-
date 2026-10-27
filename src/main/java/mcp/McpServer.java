@@ -209,8 +209,36 @@ public class McpServer {
             return toolError(e.getMessage());
         } catch (Exception e) {
             logger.error("Tool execution error: {}", toolName, e);
-            return toolError(e.getMessage());
+            return toolError(extractFullError(e));
         }
+    }
+
+    /**
+     * Извлечение полного текста ошибки из SQLException (включая вложенные причины и SQLCODE).
+     * Для Firebird это критично — основная ошибка часто лежит в cause.
+     */
+    private String extractFullError(Throwable e) {
+        StringBuilder sb = new StringBuilder();
+        Throwable current = e;
+        while (current != null) {
+            String msg = current.getMessage();
+            if (msg != null && !msg.trim().isEmpty()) {
+                sb.append(msg);
+            }
+            // Добавляем SQLCODE если доступен
+            if (current instanceof java.sql.SQLException) {
+                int sqlCode = ((java.sql.SQLException) current).getErrorCode();
+                if (sqlCode != 0) {
+                    sb.append("; SQLCODE=").append(sqlCode);
+                }
+            }
+            current = current.getCause();
+            if (current != null && current != e) {
+                sb.append(" -> ");
+            }
+        }
+        // Префикс: имя инструмента и тип ошибки
+        return e.getClass().getSimpleName() + ": " + sb.toString();
     }
 
     /** Формат ошибки инструмента: content[].text + isError=true. */
