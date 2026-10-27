@@ -6,31 +6,49 @@
   В stdio-транспорте по STDOUT идёт протокольный JSON-RPC трафик —
   любая посторонняя строка (лог, стектрейс) сломает парсер клиента (Koda).
   target="System.err" переключает консольный appender на stderr.
+
+  Файловое логирование: logs/firebird-mcp-server.log,
+  ротация при достижении 1 МБ (каждый новый файл — отдельный архив),
+  хранится до 30 архивов.
 -->
 <configuration>
 
+    <!-- Консоль: ТОЛЬКО stderr, stdout остаётся чистым для MCP-протокола -->
     <appender name="STDERR" class="ch.qos.logback.core.ConsoleAppender">
-        <!-- Ключевая настройка: логи в stderr, stdout остаётся чистым для MCP -->
         <target>System.err</target>
         <encoder>
             <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- Файловый appender — удобно для отладки HTTP-режима -->
+    <!--
+      Файловый appender с ротацией по размеру:
+      - активный файл: logs/firebird-mcp-server.log растёт до 1 МБ;
+      - при превышении 1 МБ файл переименовывается в архив
+        firebird-mcp-server.2026-10-26_0.log, открывается новый активный;
+      - _%i — счётчик файлов за один день, %d{...} — дата.
+    -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <!-- Текущий (активный) файл логов -->
         <file>logs/firebird-mcp-server.log</file>
+
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>logs/firebird-mcp-server.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>10MB</maxFileSize>
-            <maxHistory>7</maxHistory>
+            <!-- Шаблон архивных файлов: дата + счётчик за день -->
+            <fileNamePattern>logs/firebird-mcp-server.%d{yyyy-MM-dd}_%i.log</fileNamePattern>
+            <!-- Ротация при достижении 1 МБ -->
+            <maxFileSize>1MB</maxFileSize>
+            <!-- Хранить архивов за последние 30 дней -->
+            <maxHistory>30</maxHistory>
+            <!-- Общий лимит на все архивы (защита от разрастания диска) -->
+            <totalSizeCap>100MB</totalSizeCap>
         </rollingPolicy>
+
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <!-- Наш код — с отладочными сообщениями (DEBUG покажет каждый SQL и запрос) -->
+    <!-- Наш код: DEBUG покажет каждый SQL и каждый JSON-RPC запрос -->
     <logger name="mcp" level="DEBUG"/>
 
     <!-- Jaybird (драйвер Firebird) — только предупреждения и ошибки -->
