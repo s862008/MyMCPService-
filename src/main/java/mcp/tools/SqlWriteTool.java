@@ -36,8 +36,13 @@ public class SqlWriteTool implements Tool {
     public JsonObject getToolDefinition() {
         JsonObject definition = new JsonObject();
         definition.addProperty("name", "sql_execute");
-        definition.addProperty("description", "Execute a write SQL statement (INSERT, UPDATE, DELETE, " +
-                "CREATE TABLE, ALTER, DROP, EXECUTE PROCEDURE, etc.) on the Firebird 3 database (SQL dialect 1). " +
+        definition.addProperty("description", "Execute a write SQL statement on the Firebird 3 database (SQL dialect 1): " +
+                "INSERT, UPDATE, DELETE, MERGE; DDL: CREATE/ALTER/DROP for TABLE, INDEX, VIEW, " +
+                "TRIGGER, PROCEDURE, FUNCTION, PACKAGE, SEQUENCE, GENERATOR; " +
+                "GRANT/REVOKE; EXECUTE PROCEDURE/BLOCK. " +
+                "Multi-statement DDL such as CREATE OR ALTER TRIGGER ... AS BEGIN ... END is supported " +
+                "(pass the whole statement, it is executed as-is). " +
+                "This tool is also the universal fallback when a specialized tool is unavailable. " +
                 "Changes are committed immediately. " +
                 "IMPORTANT: DDL operations cannot be rolled back.");
 

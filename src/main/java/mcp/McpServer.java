@@ -198,7 +198,14 @@ public class McpServer {
 
         Tool tool = tools.get(toolName);
         if (tool == null) {
-            throw new RuntimeException("Unknown tool: " + toolName);
+            // Fallback-подсказка модели: если инструментарий устарел (Koda закэшировала
+            // tools/list до пересборки), агент может выполнить то же действие через sql_execute.
+            throw new RuntimeException("Unknown tool: " + toolName + ". " +
+                    "Available tools: " + String.join(", ", tools.keySet()) + ". " +
+                    "Fallback: DDL/DML can be executed via sql_execute " +
+                    "(CREATE OR ALTER TRIGGER / PROCEDURE / VIEW, INSERT, UPDATE, CREATE TABLE, ...). " +
+                    "If a tool is missing from this list, restart the MCP server and reconnect the client " +
+                    "to refresh tools/list.");
         }
 
         try {
