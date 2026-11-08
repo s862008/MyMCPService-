@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,10 +86,8 @@ public class SqlExecuteProcedureTool implements Tool {
             throw new IllegalArgumentException("Missing required parameter: procedure");
         }
 
-        String proc = arguments.get("procedure").getAsString().trim().toUpperCase();
-        if (!proc.matches("^[A-Z0-9_$]+$")) {
-            throw new IllegalArgumentException("Invalid procedure name: " + proc);
-        }
+        // Имя процедуры идёт в JDBC escape {call ...} — только безопасный идентификатор
+        String proc = SqlSafety.safeObjectName(arguments.get("procedure").getAsString(), "procedure");
 
         // Входные параметры: JSON-массив -> Object[]
         List<Object> params = new ArrayList<>();
@@ -120,6 +119,10 @@ public class SqlExecuteProcedureTool implements Tool {
 
         try (Connection conn = server.getDb().openConnectionForTool();
              CallableStatement call = conn.prepareCall(sql.toString())) {
+
+            // Таймаут + лимит строк результата — защита от «вечной» процедуры
+            // и гигантского RETURNING-набора.
+            server.getDb().applyLimits(call, server.getMaxProcRows());
 
             // Установка параметров по порядку
             for (int i = 0; i < params.size(); i++) {

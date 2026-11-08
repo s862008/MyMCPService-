@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -77,16 +78,18 @@ public class SqlCreateViewTool implements Tool {
             throw new IllegalArgumentException("Missing required parameter: query");
         }
 
-        String name = arguments.get("name").getAsString().trim();
         String query = arguments.get("query").getAsString().trim();
 
         // Имя идёт в DDL без кавычек — только безопасный идентификатор
-        if (!name.matches("^[A-Za-z_][A-Za-z0-9_$]*$")) {
-            throw new IllegalArgumentException("Invalid view name: " + name);
-        }
+        String name = SqlSafety.safeObjectName(arguments.get("name").getAsString(), "view");
+
         if (!query.toUpperCase().startsWith("SELECT")) {
             throw new SecurityException("View definition must be a SELECT statement");
         }
+        // Валидация SELECT-запроса для определения представления
+        SqlSafety.validate(query, true);
+
+        // Убираем завершающую точку с запятой — она ломает DDL-обёртку
         if (query.endsWith(";")) {
             query = query.substring(0, query.length() - 1).trim();
         }

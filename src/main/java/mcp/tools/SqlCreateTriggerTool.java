@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,12 +116,12 @@ public class SqlCreateTriggerTool implements Tool {
         String body = arguments.get("body").getAsString().trim();
 
         // Имена идут в DDL без кавычек — только безопасные идентификаторы
-        if (!name.matches("^[A-Za-z_][A-Za-z0-9_$]*$")) {
-            throw new IllegalArgumentException("Invalid trigger name: " + name);
-        }
-        if (!table.matches("^[A-Za-z_][A-Za-z0-9_$]*$")) {
-            throw new IllegalArgumentException("Invalid table name: " + table);
-        }
+        name = SqlSafety.safeObjectName(name, "trigger");
+        table = SqlSafety.safeObjectName(table, "table");
+
+        // Тело — PSQL-код внутри AS BEGIN ... END: множественные ';' здесь норма,
+        // поэтому validatePsqlBody (без проверки единственности инструкции).
+        SqlSafety.validatePsqlBody(body, "trigger");
 
         // Жёсткая проверка перечислений — иначе DDL соберётся некорректно
         boolean timingOk = false;

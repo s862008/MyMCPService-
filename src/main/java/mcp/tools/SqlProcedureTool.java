@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -100,16 +101,18 @@ public class SqlProcedureTool implements Tool {
             throw new IllegalArgumentException("Missing required parameter: body");
         }
 
-        String name = arguments.get("name").getAsString().trim();
+        String name = SqlSafety.safeObjectName(arguments.get("name").getAsString(), "procedure");
+        String parameters = SqlSafety.safeParamDeclaration(
+                arguments.has("parameters") ? arguments.get("parameters").getAsString() : "",
+                "parameter");
+        String returns = SqlSafety.safeParamDeclaration(
+                arguments.has("returns") ? arguments.get("returns").getAsString() : "",
+                "RETURNS");
         String body = arguments.get("body").getAsString().trim();
-        String parameters = arguments.has("parameters") ? arguments.get("parameters").getAsString().trim() : "";
-        String returns = arguments.has("returns") ? arguments.get("returns").getAsString().trim() : "";
 
-        // Имя идёт в DDL без кавычек — разрешаем только безопасный идентификатор,
-        // чтобы исключить SQL-инъекцию через поле name.
-        if (!name.matches("^[A-Za-z_][A-Za-z0-9_$]*$")) {
-            throw new IllegalArgumentException("Invalid procedure name: " + name);
-        }
+        // Тело идёт внутрь AS BEGIN ... END: множественные ';' допустимы,
+        // но комментарии, ?-параметры и паттерны чужих СУБД запрещены.
+        SqlSafety.validatePsqlBody(body, "procedure");
 
         // Сборка DDL по частям
         StringBuilder sql = new StringBuilder();

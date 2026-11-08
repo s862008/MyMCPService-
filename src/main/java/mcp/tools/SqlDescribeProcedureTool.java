@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,10 +66,8 @@ public class SqlDescribeProcedureTool implements Tool {
             throw new IllegalArgumentException("Missing required parameter: procedure");
         }
 
-        String proc = arguments.get("procedure").getAsString().trim().toUpperCase();
-        if (!proc.matches("^[A-Z0-9_$]+$")) {
-            throw new IllegalArgumentException("Invalid procedure name: " + proc);
-        }
+        // Имя подставляется в SQL-литерал конкатенацией — обязательна строгая валидация
+        String proc = SqlSafety.safeObjectName(arguments.get("procedure").getAsString(), "procedure");
 
         // Тот же CASE по RDB$FIELD_TYPE, что и в describe_table — единое представление типов.
         // DECIMAL/NUMERIC в FB3 имеют код 27 (как DOUBLE) — различаются по scale != 0.

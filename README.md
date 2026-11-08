@@ -81,6 +81,7 @@ myMCPService/
     │       ├── McpServer.java       — Ядро: JSON-RPC 2.0 маршрутизация
     │       ├── HttpServer.java      — HTTP/SSE транспорт (com.sun.net.httpserver)
     │       ├── IniReader.java       — Парсер INI-файлов (без внешних зависимостей)
+    │       ├── SqlSafety.java       — Валидатор SQL: инъекции, лимиты, политики [security]
     │       ├── db/
     │       │   └── FirebirdDb.java  — Слой доступа к Firebird (JDBC, Jaybird)
     │       └── tools/
@@ -124,7 +125,7 @@ JSON-RPC сообщения передаются через stdin/stdout.
 - **Java 11** (OpenJDK или Oracle JDK)
 - **Maven 3.6+**
 - **Firebird 3.x** (локально или удалённо)
-- Драйвер **Jaybird 4.x** (подключается через Maven)
+- Драйвер **Jaybird 5.x** (подключается через Maven)
 
 ### Сборка
 
@@ -169,13 +170,14 @@ java -jar target/firebird-mcp-server.jar
 Расположите файл `mcp-config.ini` рядом с jar-файлом.
 Путь можно указать явно через системное свойство: `-Dconfig.file=C:\path\to\mcp-config.ini`
 
-Подробное описание всех параметров — в комментариях внутри файла `mcp-config.ini`.
+Подробное описание всех параметров — в комментариях внутри файла `mcp-config.ini.example`.
 
 ### Источники конфигурации (по возрастанию приоритета)
 
 1. **Значения по умолчанию** (в коде `Main.Config`)
 2. **mcp-config.ini** — основной пользовательский конфиг (рядом с jar)
-3. **application.properties** (classpath / внешний) — обратная совместимость
+3. **application.properties** (classpath / внешний) — обратная совместимость,
+   применяется ТОЛЬКО если mcp-config.ini отсутствует
 4. **Переменные окружения** (высший приоритет)
 
 ### Переменные окружения
@@ -187,7 +189,6 @@ java -jar target/firebird-mcp-server.jar
 | `DB_PATH` | `B:\bdtest\TESTBASE.FDB` | Путь к .FDB файлу |
 | `DB_USER` | `SYSDBA` | Пользователь БД |
 | `DB_PASSWORD` | `masterkey` | Пароль (задавайте через env!) |
-| `DB_DIALECT` | `1` | SQL-диалект |
 | `TRANSPORT` | `stdio` | `stdio` или `http` |
 | `HTTP_PORT` | `8080` | Порт HTTP-транспорта |
 | `HTTP_HOST` | `0.0.0.0` | Интерфейс HTTP-транспорта |
@@ -268,19 +269,54 @@ java -jar target/firebird-mcp-server.jar
 
 ## Безопасность
 
+Сервер включает централизованный валидатор `SqlSafety` и защитные лимиты,
+настраиваемые в секции `[security]` файла `mcp-config.ini`.
+
+### Защита от инъекций и злоупотреблений
+
+| Мера | Инструменты | Описание |
+|---|---|---|
+| **Разделение read/write** | sql_query / sql_execute | `sql_query` принимает только SELECT; запись — только через `sql_execute`. |
+| **Блокировка множественных инструкций** | sql_query, sql_execute | `;` вне PSQL-блоков BEGIN...END блокируется (тело триггеров/процедур не затрагивается). |
+| **Удаление комментариев** | sql_query, sql_execute | `--` и `/* */` удаляются до проверок — предотвращает обфускацию. |
+| **safeObjectName** | sql_describe_table, sql_describe_procedure, sql_execute_procedure, sql_create_procedure/view/trigger | Имена объектов проверяются по regex `^[A-Za-z_][A-Za-z0-9_$]{0,30}$` — исключает SQL-инъекцию через конкатенацию. |
+| **safeParamDeclaration** | sql_create_procedure | Строки parameters/RETURNS допускают только идентификаторы, типы, запятые и скобки. |
+| **Детект ?-параметров** | sql_query, sql_execute, sql_explain | JDBC-плейсхолдеры `?` вне строковых литералов блокируются с понятной подсказкой — сервер исполняет SQL буквально. |
+| **Опасные паттерны** | sql_query, sql_execute, PSQL-тела | xp_cmdshell, sp_executesql, sysobjects, pg_sleep, benchmark(, waitfor delay, load_file(, into outfile/dumpfile — все заблокированы. |
+| **WHERE у UPDATE/DELETE** | sql_execute | По умолчанию `require_where = true` — массовые операции блокируются. |
+| **block_ddl / block_drop** | sql_execute, sql_create_* | Полная блокировка DDL или только DROP (конфигурируемо, по умолчанию разрешено). |
+
+### Защитные лимиты
+
+| Параметр | По умолчанию | Описание |
+|---|---|---|
+| `query_timeout_sec` | `30` | `Statement.setQueryTimeout()` — прерывает зависшие запросы (Full Table Scan, декартово произведение). `0` — отключить (не рекомендуется). |
+| `max_query_rows` | `10000` | `Statement.setMaxRows()` — ограничение выборки SELECT на уровне драйвера. Результат содержит `truncated: true`, если обрезан. |
+| `max_proc_rows` | `1000` | Лимит строк результата хранимой процедуры (RETURNS). |
+
+### Пример секции [security] в mcp-config.ini
+
+```ini
+[security]
+query_timeout_sec = 30
+block_ddl = false
+block_drop = false
+require_where = true
+```
+
+### Прочее
+
 | Мера | Описание |
 |---|---|
-| **Разделение read/write** | `sql_query` принимает ТОЛЬКО SELECT-запросы. Писать через него нельзя. |
-| **Валидация имён** | `sql_create_procedure` проверяет, что имя процедуры — безопасный идентификатор. |
 | **Пароли в env** | Рекомендуется передавать DB_PASSWORD через переменную окружения, не хранить в файле. |
 | **Логи в stderr** | Все логи пишутся в STDERR (logback target=System.err). STDOUT чист для протокольного JSON. |
-| **Ограничение выборки** | SELECT не вернёт больше 10 000 строк за раз (защита от OOM). |
+| **mcp-config.ini в .gitignore** | Файл с паролями не попадает в репозиторий; в git — только `mcp-config.ini.example`. |
 
 ## Логирование
 
 - **stdout** — только JSON-RPC протокольные сообщения (в stdio-режиме).
 - **stderr** — все логи (logback ConsoleAppender с target=System.err).
-- **Файл** — `logs/firebird-mcp-server.log` (ежедневное ротирование, макс 7 файлов по 10 МБ).
+- **Файл** — `logs/firebird-mcp-server.log` (ротация 1 МБ, до 30 файлов, суммарно до 100 МБ).
 
 ## Структура ответов
 
@@ -355,6 +391,11 @@ LLM-агенту особенности SQL-диалектов и версий F
 | `firebird4-mcp-server` | Firebird **4.0**: PSQL-пакеты, IDENTITY, аутентификация Srp256/Legacy_Auth |
 | `firebird5-mcp-server` | Firebird **5.0**: security2.fdb, WireCrypt, JSON_VALUE, расширенный MON$ |
 
+Каждый skill содержит раздел **«Запрещённый синтаксис (частые ошибки)»**
+(нет `CREATE TABLE IF NOT EXISTS`, нет `LIMIT`, `?`-плейсхолдеры запрещены,
+UPDATE/DELETE только с WHERE) и раздел **«Безопасность»** с описанием
+автоматических блокировок сервера — это снижает число ошибочных запросов агента.
+
 ### Как выбрать skill
 
 1. Определите версию сервера: `SELECT RDB$GET_CONTEXT('COMMON', 'ENGINE_VERSION') FROM RDB$DATABASE`
@@ -369,7 +410,6 @@ IDENTITY vs GEN_ID+триггер, PSQL-пакеты и т.п.).
 
 - Поддержка нескольких баз данных (multi-datasource)
 - Кэширование метаданных (список таблиц/колонок)
-- Валидация SQL перед выполнением
 - Поддержка транзакций для DML-операций (ROLLBACK)
 - WebSocket-транспорт вместо HTTP
 - Аутентификация через API-токен для HTTP-режима

@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +76,10 @@ public class SqlWriteTool implements Tool {
             throw new SecurityException("SELECT queries should be executed via sql_query tool. " +
                     "Use sql_execute for write operations (INSERT, UPDATE, DELETE, CREATE, etc.).");
         }
+
+        // Единый валидатор: множественные инструкции, комментарии, инъекции,
+        // UPDATE/DELETE без WHERE (защита от mass-update).
+        SqlSafety.validateStatement(query);
 
         try {
             Map<String, Object> result = server.getDb().executeUpdate(query);

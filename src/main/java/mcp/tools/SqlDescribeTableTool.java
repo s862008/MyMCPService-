@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,12 +68,8 @@ public class SqlDescribeTableTool implements Tool {
             throw new IllegalArgumentException("Missing required parameter: table");
         }
 
-        String table = arguments.get("table").getAsString().trim().toUpperCase();
-
-        // Валидация имени — защита от инъекции (имя подставляется в литерал SQL)
-        if (!table.matches("^[A-Z0-9_$]+$")) {
-            throw new IllegalArgumentException("Invalid table name: " + table);
-        }
+        // Имя подставляется в SQL-литерал конкатенацией — обязательна строгая валидация
+        String table = SqlSafety.safeObjectName(arguments.get("table").getAsString(), "table");
 
         // Запрос связывает колонки (RDB$RELATION_FIELDS) с типами (RDB$FIELDS).
         // ВАЖНО: в Firebird 3 DECIMAL/NUMERIC хранится как RDB$FIELD_TYPE=27,

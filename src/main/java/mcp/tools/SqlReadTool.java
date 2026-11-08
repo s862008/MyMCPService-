@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,13 +68,14 @@ public class SqlReadTool implements Tool {
 
         String query = arguments.get("query").getAsString().trim();
 
-        // Простейшая защита на уровне первого ключевого слова.
-        // (Полноценный SQL-парсер избыточен: у сервера и так отдельный
-        // инструмент sql_execute, а подключение — под учёткой с нужными правами.)
+        // Безопасность: только SELECT
         if (!query.toUpperCase().startsWith("SELECT")) {
             throw new SecurityException("Only SELECT queries are allowed in sql_query tool. " +
                     "Use sql_execute for write operations.");
         }
+
+        // Единый валидатор: множественные инструкции, комментарии, инъекции
+        SqlSafety.validateStatement(query);
 
         try {
             Map<String, Object> result = server.getDb().executeQuery(query);

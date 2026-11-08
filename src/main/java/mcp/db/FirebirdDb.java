@@ -31,6 +31,8 @@ public class FirebirdDb {
     private final String password;
     private final int dialect;
     private final String charset;
+    private final int queryTimeoutSec;
+    private final int maxQueryRows;
 
     public FirebirdDb(Main.Config config) {
         // Формат URL Jaybird 4.x: jdbc:firebirdsql://host:port/path?параметры
@@ -42,6 +44,8 @@ public class FirebirdDb {
         this.password = config.dbPassword;
         this.dialect = config.dbDialect;
         this.charset = config.dbCharset;
+        this.queryTimeoutSec = config.securityQueryTimeoutSec;
+        this.maxQueryRows = config.maxQueryRows;
 
         // Явная загрузка драйвера не обязательна (JDBC 4 auto-discovery),
         // но оставлена для явности и понятных сообщений об отсутствии драйвера.
@@ -77,60 +81,103 @@ public class FirebirdDb {
     }
 
     /**
-     * Выполнение SELECT.
+     * Применение защитных лимитов к созданному Statement.
+     *
+     * <p>ВАЖНО: вызывать ДО {@code executeQuery} — JDBC-параметры читаются
+     * драйвером при постановке запроса в выполнение, после execute они
+     * уже не действуют.</p>
+     *
+     * <ul>
+     *   <li>{@code setQueryTimeout} — прерывает «вечный» запрос (Full Table Scan
+     *       без индекса, декартово произведение) вместо зависания клиента;</li>
+     *   <li>{@code setMaxRows} — ограничивает выборку на уровне драйвера,
+     *       защищая heap от OOM на гигантских результатах.</li>
+     * </ul>
+     *
+     * <p>Значения 0 отключают соответствующую защиту (JDBC-семантика).</p>
+     *
+     * @param stmt    готовый Statement/PreparedStatement
+     * @param maxRows лимит строк; &lt;= 0 — взять maxQueryRows из конфига
+     */
+    public void applyLimits(Statement stmt, int maxRows) throws SQLException {
+        if (queryTimeoutSec > 0) {
+            stmt.setQueryTimeout(queryTimeoutSec);
+        }
+        int rows = maxRows > 0 ? maxRows : maxQueryRows;
+        if (rows > 0) {
+            stmt.setMaxRows(rows);
+        }
+    }
+
+    /**
+     * Выполнение SELECT с защитными лимитами из конфигурации.
      *
      * @return map с ключами:
      *   columns  — String[] имён колонок,
      *   rows     — List&lt;Map&lt;String,Object&gt;&gt; (по строке на запись),
-     *   rowCount — число возвращённых строк (не более 10000).
+     *   rowCount — число возвращённых строк (не более max_query_rows),
+     *   truncated — true, если результат обрезан лимитом.
      */
     public Map<String, Object> executeQuery(String sql) throws SQLException {
         logger.debug("Executing query: {}", sql);
 
-        // try-with-resources гарантированно закроет conn/stmt/rs при любой ветке,
-        // включая SQLException из executeQuery.
         try (Connection conn = openConnection();
-             Statement stmt = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
-             ResultSet rs = stmt.executeQuery(sql)) {
+             Statement stmt = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
 
-            ResultSetMetaData metaData = rs.getMetaData();
-            int columnCount = metaData.getColumnCount();
+            // Лимиты применяем ДО выполнения запроса — иначе setMaxRows/таймаут
+            // не успели бы повлиять на выполнение.
+            // +1 строка к лимиту: драйвер вернёт на одну строку больше, чем отдаём
+            // наружу, — это позволяет честно сообщить агенту о truncation.
+            applyLimits(stmt, maxQueryRows > 0 ? maxQueryRows + 1 : 0);
 
-            // Имена колонок: getColumnLabel учитывает AS-алиасы.
-            // trim() — в диалекте 1 имена системных таблиц (RDB$...) padding'ятся пробелами.
-            String[] columnNames = new String[columnCount];
-            for (int i = 1; i <= columnCount; i++) {
-                columnNames[i - 1] = metaData.getColumnLabel(i).trim();
-            }
+            int limit = maxQueryRows > 0 ? maxQueryRows : Integer.MAX_VALUE;
+            boolean truncated = false;
 
-            List<Map<String, Object>> rows = new ArrayList<>();
-            int rowCount = 0;
-            while (rs.next()) {
-                Map<String, Object> row = new HashMap<>();
-                for (int i = 0; i < columnCount; i++) {
-                    Object value = rs.getObject(i + 1);
-                    if (value instanceof String) {
-                        // CHAR(n) в Firebird дополняется пробелами до n символов — срезаем.
-                        value = ((String) value).trim();
+            try (ResultSet rs = stmt.executeQuery(sql)) {
+                ResultSetMetaData metaData = rs.getMetaData();
+                int columnCount = metaData.getColumnCount();
+
+                // Имена колонок: getColumnLabel учитывает AS-алиасы.
+                // trim() — в диалекте 1 имена системных таблиц (RDB$...) padding'ятся пробелами.
+                String[] columnNames = new String[columnCount];
+                for (int i = 1; i <= columnCount; i++) {
+                    columnNames[i - 1] = metaData.getColumnLabel(i).trim();
+                }
+
+                List<Map<String, Object>> rows = new ArrayList<>();
+                int rowCount = 0;
+                while (rs.next()) {
+                    if (rowCount >= limit) {
+                        // Одна лишняя попытка next() ниже покажет, что строк больше.
+                        truncated = true;
+                        break;
                     }
-                    row.put(columnNames[i], value);
+                    Map<String, Object> row = new HashMap<>();
+                    for (int i = 0; i < columnCount; i++) {
+                        Object value = rs.getObject(i + 1);
+                        if (value instanceof String) {
+                            // CHAR(n) в Firebird дополняется пробелами до n символов — срезаем.
+                            value = ((String) value).trim();
+                        }
+                        row.put(columnNames[i], value);
+                    }
+                    rows.add(row);
+                    rowCount++;
                 }
-                rows.add(row);
-                rowCount++;
-                if (rowCount >= 10000) {
-                    // Защита от выедания памяти гигантскими выборками.
-                    logger.warn("Query returned more than 10000 rows, truncating");
-                    break;
+
+                if (truncated) {
+                    logger.warn("Query result truncated at {} rows (max_query_rows)", limit);
                 }
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("columns", columnNames);
+                result.put("rows", rows);
+                result.put("rowCount", rowCount);
+                result.put("truncated", truncated);
+
+                logger.debug("Query returned {} rows", rowCount);
+                return result;
             }
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("columns", columnNames);
-            result.put("rows", rows);
-            result.put("rowCount", rowCount);
-
-            logger.debug("Query returned {} rows", rowCount);
-            return result;
         }
     }
 
@@ -154,6 +201,11 @@ public class FirebirdDb {
             // Управляем транзакцией вручную, чтобы явно commit/rollback.
             conn.setAutoCommit(false);
             try (Statement stmt = conn.createStatement()) {
+                // Только таймаут: setMaxRows здесь неприменим — DML обязан
+                // изменить все подходящие строки, а не их часть.
+                if (queryTimeoutSec > 0) {
+                    stmt.setQueryTimeout(queryTimeoutSec);
+                }
                 boolean hasResults = stmt.execute(sql);
                 int rowsAffected = stmt.getUpdateCount(); // -1 для DDL/без счётчика
 

@@ -2,6 +2,7 @@ package mcp.tools;
 
 import com.google.gson.*;
 import mcp.McpServer;
+import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,6 +71,16 @@ public class SqlExplainTool implements Tool {
         if (!query.toUpperCase().startsWith("SELECT")) {
             throw new SecurityException("sql_explain supports SELECT statements only");
         }
+        // EXPLAIN не поддерживает ?-параметры — даём понятную подсказку вместо
+        // маловнятной ошибки драйвера "expected N, got 0".
+        if (SqlSafety.hasJdbcParams(SqlSafety.stripComments(query))) {
+            throw new SecurityException(
+                "sql_explain does not support ?-parameters. " +
+                "Provide concrete values directly in the SQL statement.");
+        }
+        // Общий валидатор SQL для SELECT: комментарии, множественные инструкции,
+        // опасные паттерны, ?-параметры.
+        SqlSafety.validate(query, true);
         // Убираем завершающую точку с запятой — она ломает обёртку
         if (query.endsWith(";")) {
             query = query.substring(0, query.length() - 1).trim();

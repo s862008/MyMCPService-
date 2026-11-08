@@ -43,6 +43,10 @@ public class Main {
 
         // 2. Создаём ядро сервера: подключение к БД проверяется сразу,
         //    при неудаче — падаем с внятной ошибкой (fail-fast).
+        //    Политики безопасности настраиваются ДО создания McpServer —
+        //    SqlSafety будет применять их сразу при обработке первого запроса.
+        SqlSafety.configure(config.securityRequireWhere,
+                config.securityBlockDdl, config.securityBlockDrop);
         McpServer server = new McpServer(config);
 
         // 3. Регистрируем graceful shutdown на Ctrl+C / kill:
@@ -185,7 +189,40 @@ public class Main {
         config.maxQueryRows  = ini1.getInt("app", "max_query_rows", config.maxQueryRows);
         config.maxProcRows   = ini1.getInt("app", "max_proc_rows", config.maxProcRows);
 
+        // [security] — лимиты и блокировки
+        config.securityQueryTimeoutSec = ini1.getInt("security", "query_timeout_sec", config.securityQueryTimeoutSec);
+        config.securityBlockDdl        = ini1.getBoolean("security", "block_ddl", config.securityBlockDdl);
+        config.securityBlockDrop       = ini1.getBoolean("security", "block_drop", config.securityBlockDrop);
+        config.securityRequireWhere    = ini1.getBoolean("security", "require_where", config.securityRequireWhere);
+
+        validateSecurity(config);
         return true;
+    }
+
+    /**
+     * Проверка и «приведение» лимитов безопасности.
+     * Опечатка в конфиге не должна превращать защиту в DoS (например timeout=0
+     * отключает таймаут вообще, max_rows=0 — не ограничивает ничего).
+     */
+    private static void validateSecurity(Config config) {
+        if (config.securityQueryTimeoutSec < 0) {
+            logger.warn("query_timeout_sec={} is invalid, using default 30", config.securityQueryTimeoutSec);
+            config.securityQueryTimeoutSec = 30;
+        }
+        if (config.securityQueryTimeoutSec == 0) {
+            logger.warn("query_timeout_sec=0 disables the timeout — long queries can hang the server");
+        }
+        if (config.maxQueryRows <= 0) {
+            logger.warn("max_query_rows={} is invalid, using default 10000", config.maxQueryRows);
+            config.maxQueryRows = 10000;
+        }
+        if (config.maxProcRows <= 0) {
+            logger.warn("max_proc_rows={} is invalid, using default 1000", config.maxProcRows);
+            config.maxProcRows = 1000;
+        }
+        logger.info("Security: query_timeout_sec={}, max_query_rows={}, max_proc_rows={}, block_ddl={}, block_drop={}, require_where={}",
+                config.securityQueryTimeoutSec, config.maxQueryRows, config.maxProcRows,
+                config.securityBlockDdl, config.securityBlockDrop, config.securityRequireWhere);
     }
 
     /** Копирование значений из Properties в Config (обратная совместимость). */
@@ -268,5 +305,15 @@ public class Main {
         // --- Прочее ---
         public int maxQueryRows = 10000;                 // лимит строк SELECT
         public int maxProcRows = 1000;                   // лимит строк RETURNING
+
+        // --- Безопасность (секция [security]) ---
+        /** Таймаут выполнения запроса (Statement.setQueryTimeout), сек. 0 — без таймаута. */
+        public int securityQueryTimeoutSec = 30;
+        /** Блокировать DDL (CREATE/ALTER/DROP) в sql_execute. По умолчанию разрешено. */
+        public boolean securityBlockDdl = false;
+        /** Блокировать DROP в sql_execute (точечная защита, CREATE/ALTER остаются). */
+        public boolean securityBlockDrop = false;
+        /** Требовать WHERE у UPDATE/DELETE. true — массовые операции блокируются. */
+        public boolean securityRequireWhere = true;
     }
 }

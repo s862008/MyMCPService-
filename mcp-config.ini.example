@@ -39,3 +39,23 @@ encoding = UTF-8
 log_dir = logs
 max_query_rows = 10000
 max_proc_rows = 1000
+
+; ---------- Безопасность ----------
+[security]
+; Таймаут выполнения SQL-запроса (setQueryTimeout), сек.
+; 0 = без таймаута (не рекомендуется, может вызвать OOM/зависание).
+; Применяется ко всем SELECT, DML и DDL.
+query_timeout_sec = 30
+
+; Блокировать DDL в sql_execute (CREATE/ALTER/DROP).
+; false = разрешено (по умолчанию), true = заблокировано.
+block_ddl = false
+
+; Точечная блокировка DROP (самая разрушительная операция).
+; CREATE/ALTER останутся разрешёнными.
+block_drop = false
+
+; Требовать WHERE у UPDATE/DELETE.
+; true = массовые операции блокируются (по умолчанию),
+; false = разрешено (агент может снести всю таблицу).
+require_where = true
