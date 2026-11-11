@@ -178,8 +178,8 @@ public class SqlDescribeTableTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("Describe table error: {}", e.getMessage());
-            throw new RuntimeException("Error describing table: " + e.getMessage(), e);
+            logger.error("Describe table error: {} | Table: {}", e.getMessage(), table);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 

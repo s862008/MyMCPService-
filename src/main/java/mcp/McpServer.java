@@ -252,17 +252,22 @@ public class McpServer {
     }
 
     /**
-     * Извлечение полного текста ошибки из SQLException (включая вложенные причины и SQLCODE).
+     * Извлечение полного текста ошибки из SQLException (включая вложенные причины).
      *
-     * <p>Для Firebird это критично — содержательная часть часто лежит в cause
+     * <p>Для Firebird содержательная часть часто лежит в cause
      * («Column unknown; PD.NAME; At line 1, column 65»), а верхний уровень содержит
-     * лишь «Dynamic SQL Error». Цепочка cause повторяет одни и те же фразы, поэтому
-     * сегменты дедуплицируются — иначе агент читает один и тот же текст трижды
-     * и не видит главного.</p>
+     * лишь «Dynamic SQL Error». При этом инструменты оборачивают SQLException
+     * в RuntimeException с тем же текстом в message, из-за чего одна и та же
+     * фраза попадала в ответ дважды. Поэтому:</p>
+     * <ul>
+     *   <li>сегменты дедуплицируются;</li>
+     *   <li>сегмент, целиком содержащийся в другом, отбрасывается как менее информативный;</li>
+     *   <li>код ошибки помечается как ISC (Firebird), а не SQLCODE — Jaybird возвращает
+     *       в getErrorCode() ISC-код (335544578), а реальный SQLCODE (-206) есть в тексте.</li>
+     * </ul>
      */
     private String extractFullError(Throwable e) {
-        // LinkedHashSet: порядок важен (верхний уровень -> причина), дубликаты не нужны
-        java.util.LinkedHashSet<String> parts = new java.util.LinkedHashSet<>();
+        java.util.List<String> parts = new java.util.ArrayList<>();
         Throwable current = e;
         while (current != null) {
             String msg = current.getMessage();
@@ -271,26 +276,42 @@ public class McpServer {
             }
             if (current instanceof java.sql.SQLException) {
                 java.sql.SQLException sqlEx = (java.sql.SQLException) current;
-                if (sqlEx.getErrorCode() != 0) {
-                    parts.add("SQLCODE=" + sqlEx.getErrorCode());
+                // getErrorCode() у Jaybird — это ISC-код; реальный SQLCODE виден в тексте.
+                // Добавляем только если драйвер не вписал его в сообщение сам.
+                int code = sqlEx.getErrorCode();
+                String joined = String.join(" ", parts);
+                if (code != 0 && !joined.contains("ISC error code:" + code)
+                        && !joined.contains("ISC=" + code)) {
+                    parts.add("ISC=" + code);
                 }
                 String state = sqlEx.getSQLState();
-                if (state != null && !state.trim().isEmpty()) {
+                if (state != null && !state.trim().isEmpty() && !joined.contains(state)) {
                     parts.add("SQLState=" + state);
                 }
             }
             current = current.getCause();
         }
 
-        StringBuilder sb = new StringBuilder();
-        for (String part : parts) {
-            if (sb.length() > 0) sb.append(" | ");
-            sb.append(part);
+        // Убираем сегменты, которые полностью входят в другой (обёртка дублирует cause)
+        java.util.List<String> kept = new java.util.ArrayList<>();
+        for (String candidate : parts) {
+            boolean redundant = false;
+            for (String other : parts) {
+                if (other == candidate) continue;
+                if (other.length() > candidate.length() && other.contains(candidate)) {
+                    redundant = true;
+                    break;
+                }
+            }
+            if (!redundant && !kept.contains(candidate)) {
+                kept.add(candidate);
+            }
         }
-        if (sb.length() == 0) {
-            sb.append(e.getClass().getSimpleName());
+
+        if (kept.isEmpty()) {
+            return e.getClass().getSimpleName();
         }
-        return sb.toString();
+        return String.join(" | ", kept);
     }
 
     /** Формат ошибки инструмента: content[].text + isError=true. */

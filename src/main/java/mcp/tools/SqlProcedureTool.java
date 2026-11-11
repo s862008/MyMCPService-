@@ -154,8 +154,8 @@ public class SqlProcedureTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("Procedure creation error: {}", e.getMessage());
-            throw new RuntimeException("Procedure creation error: " + e.getMessage(), e);
+            logger.error("Procedure creation error: {} | SQL: {}", e.getMessage(), sql);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 

@@ -102,8 +102,9 @@ public class SqlWriteTool implements Tool {
             return response;
 
         } catch (SQLException e) {
+            // Без префикса: структурированный ответ формирует McpServer (Reason + Hint).
             logger.error("SQL execute error: {} | Statement: {}", e.getMessage(), query);
-            throw new RuntimeException("SQL error: " + e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 

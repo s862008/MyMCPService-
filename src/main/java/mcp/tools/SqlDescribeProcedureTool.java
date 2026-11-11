@@ -140,8 +140,8 @@ public class SqlDescribeProcedureTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("Describe procedure error: {}", e.getMessage());
-            throw new RuntimeException("Error describing procedure: " + e.getMessage(), e);
+            logger.error("Describe procedure error: {} | Procedure: {}", e.getMessage(), proc);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 

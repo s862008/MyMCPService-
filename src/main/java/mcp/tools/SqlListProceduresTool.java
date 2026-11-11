@@ -79,7 +79,7 @@ public class SqlListProceduresTool implements Tool {
 
         } catch (SQLException e) {
             logger.error("List procedures error: {}", e.getMessage());
-            throw new RuntimeException("Error listing procedures: " + e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }

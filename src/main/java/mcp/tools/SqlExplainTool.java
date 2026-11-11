@@ -136,8 +136,8 @@ public class SqlExplainTool implements Tool {
 
         } catch (SQLException e) {
             // Ошибка синтаксиса/семантики — именно то, ради чего инструмент вызывается
-            logger.debug("Explain validation error (expected case): {}", e.getMessage());
-            throw new RuntimeException("SQL validation error: " + e.getMessage(), e);
+            logger.debug("Explain validation error (expected case): {} | Query: {}", e.getMessage(), query);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }

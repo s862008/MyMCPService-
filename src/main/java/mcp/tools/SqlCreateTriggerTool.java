@@ -157,8 +157,8 @@ public class SqlCreateTriggerTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("Trigger creation error: {}", e.getMessage());
-            throw new RuntimeException("Trigger creation error: " + e.getMessage(), e);
+            logger.error("Trigger creation error: {} | SQL: {}", e.getMessage(), sql);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }

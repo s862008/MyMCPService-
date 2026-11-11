@@ -112,8 +112,8 @@ public class SqlCreateViewTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("View creation error: {}", e.getMessage());
-            throw new RuntimeException("View creation error: " + e.getMessage(), e);
+            logger.error("View creation error: {} | SQL: {}", e.getMessage(), sql);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }

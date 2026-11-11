@@ -101,8 +101,10 @@ public class SqlReadTool implements Tool {
         } catch (SQLException e) {
             // Текст ошибки Firebird нельзя скрывать за общим сообщением —
             // модель чинит SQL именно по тексту ошибки (SQLCODE/GDSC).
+            // Префикс «SQL error: » не добавляем: McpServer сам формирует
+            // структурированный ответ (tool + Reason + Hint), иначе причина дублируется.
             logger.error("SQL query error: {} | Query: {}", e.getMessage(), query);
-            throw new RuntimeException("SQL error: " + e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 

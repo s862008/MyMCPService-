@@ -85,7 +85,7 @@ public class SqlListTablesTool implements Tool {
 
         } catch (SQLException e) {
             logger.error("List tables error: {}", e.getMessage());
-            throw new RuntimeException("Error listing tables: " + e.getMessage(), e);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }

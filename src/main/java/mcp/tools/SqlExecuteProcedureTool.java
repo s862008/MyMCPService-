@@ -180,8 +180,8 @@ public class SqlExecuteProcedureTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("Procedure execution error: {}", e.getMessage());
-            throw new RuntimeException("Procedure execution error: " + e.getMessage(), e);
+            logger.error("Procedure execution error: {} | Call: {}", e.getMessage(), sql);
+            throw new RuntimeException(e.getMessage(), e);
         }
     }
 }
