@@ -387,4 +387,90 @@ public final class SqlSafety {
         }
         return false;
     }
+
+    // ==================== Подсказки по ошибкам Firebird ====================
+
+    /**
+     * Готовая подсказка «что делать» для текста ошибки Firebird.
+     *
+     * <p>Без этого агент видит лишь «Dynamic SQL Error; Column unknown; PD.NAME»
+     * и повторяет тот же запрос. Подсказка направляет его на нужный инструмент
+     * разведки схемы (sql_describe_table) или на правильный синтаксис.</p>
+     *
+     * @param errorText полный текст ошибки (из extractFullError)
+     * @return подсказка или null, если ошибка не распознана
+     */
+    public static String hintFor(String errorText) {
+        if (errorText == null) return null;
+        String t = errorText.toLowerCase();
+
+        // -206 Column unknown
+        if (t.contains("column unknown") || t.contains("sqlcode=-206")) {
+            return "Колонка не существует. Вызовите sql_describe_table для каждой таблицы "
+                 + "из запроса и используйте ТОЛЬКО реальные имена колонок. Не угадывайте имена.";
+        }
+        // -204 Table unknown
+        if (t.contains("table unknown") || t.contains("sqlcode=-204")) {
+            return "Таблица/представление не существует. Вызовите sql_list_tables "
+                 + "и используйте точное имя из результата (в Firebird по умолчанию ВЕРХНИЙ регистр).";
+        }
+        // -104 / -105 syntax
+        if (t.contains("sqlcode=-104") || t.contains("invalid token")
+                || t.contains("sqlcode=-105") || t.contains("unexpected end of command")) {
+            return "Синтаксическая ошибка. Частые причины в Firebird: нет LIMIT (используйте FIRST n), "
+                 + "нет IF NOT EXISTS, нет CURRENT_DATE в диалекте 1 (используйте CURRENT_TIMESTAMP). "
+                 + "Проверьте запрос через sql_explain.";
+        }
+        // -303 / -305 conversion
+        if (t.contains("sqlcode=-303") || t.contains("conversion error")
+                || t.contains("sqlcode=-305") || t.contains("arithmetic exception")) {
+            return "Ошибка преобразования типов. Сверьте типы через sql_describe_table: "
+                 + "числовые колонки сравнивайте без кавычек, строковые — в одинарных кавычках, "
+                 + "даты — как DATE '2026-01-01' или CAST(...).";
+        }
+        // -802 uniqueness / constraint
+        if (t.contains("sqlcode=-802") || t.contains("violation of primary or unique key")) {
+            return "Нарушение PRIMARY KEY / UNIQUE — такое значение уже есть. "
+                 + "Проверьте существующие записи через sql_query перед INSERT.";
+        }
+        // -803 / -625 foreign key
+        if (t.contains("sqlcode=-803") || t.contains("foreign key")
+                || t.contains("sqlcode=-625") || t.contains("partner key")) {
+            return "Нарушение внешнего ключа: ссылка на несуществующую родительскую запись "
+                 + "или удаление записи, на которую ссылаются. Проверьте справочную таблицу.";
+        }
+        // NOT NULL
+        if (t.contains("sqlcode=-625") || t.contains("validation error for column")
+                || t.contains("attempt to store null")) {
+            return "Попытка записать NULL в колонку NOT NULL. "
+                 + "Проверьте структуру через sql_describe_table и заполните обязательные поля.";
+        }
+        // already exists
+        if (t.contains("already exists")) {
+            return "Объект уже существует. Используйте CREATE OR ALTER (для процедур/триггеров/"
+                 + "представлений) или ALTER TABLE (для колонок) вместо повторного CREATE.";
+        }
+        // object in use
+        if (t.contains("object") && t.contains("is in use")) {
+            return "Объект занят активным запросом. Повторите операцию после завершения "
+                 + "параллельного соединения (или перезапустите сервер приложения).";
+        }
+        // deadlock / lock conflict
+        if (t.contains("deadlock") || t.contains("lock conflict")
+                || t.contains("update conflicts with concurrent update")) {
+            return "Конфликт блокировок: запись изменяется параллельно. Повторите запрос; "
+                 + "если повторяется — работайте с другой строкой или сократите транзакцию.";
+        }
+        // timeout
+        if (t.contains("timeout") || t.contains("cancelled")) {
+            return "Запрос прерван по таймауту (query_timeout_sec). Упростите запрос, "
+                 + "добавьте FIRST n и условия WHERE по индексированным колонкам.";
+        }
+        // permissions
+        if (t.contains("no permission") || t.contains("insufficient privileges")) {
+            return "Недостаточно прав у пользователя БД. Операцию должен выполнить "
+                 + "пользователь с соответствующими привилегиями (GRANT).";
+        }
+        return null;
+    }
 }

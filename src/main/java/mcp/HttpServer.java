@@ -103,7 +103,19 @@ public class HttpServer {
             return;
         }
 
+        // Ответы с ошибкой инструмента логируем отдельно: раньше причина отказа
+        // оставалась только в ответе клиенту, и по логам нельзя было понять,
+        // почему агент не выполнил запрос.
+        if (response.contains("\"isError\": true") || response.contains("\"isError\":true")) {
+            logger.warn("MCP tool returned error to client: {}", abbreviate(response));
+        }
+
         sendResponse(exchange, 200, response, "application/json");
+    }
+
+    /** Усечение длинного тела для лога. */
+    private static String abbreviate(String s) {
+        return s.length() > 1000 ? s.substring(0, 1000) + "...(truncated)" : s;
     }
 
     /**

@@ -69,9 +69,13 @@ public class SqlReadTool implements Tool {
         String query = arguments.get("query").getAsString().trim();
 
         // Безопасность: только SELECT
-        if (!query.toUpperCase().startsWith("SELECT")) {
-            throw new SecurityException("Only SELECT queries are allowed in sql_query tool. " +
-                    "Use sql_execute for write operations.");
+        String head = query.toUpperCase();
+        if (!head.startsWith("SELECT") && !head.startsWith("WITH")) {
+            throw new SecurityException(
+                    "sql_query accepts SELECT statements only (WITH ... SELECT is also allowed). " +
+                    "Received: " + firstWords(query) + ". " +
+                    "Use sql_execute for INSERT/UPDATE/DELETE/DDL, " +
+                    "sql_list_tables / sql_describe_table for schema inspection.");
         }
 
         // Единый валидатор: множественные инструкции, комментарии, инъекции
@@ -95,11 +99,17 @@ public class SqlReadTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            // Текст ошибки Firebird полезнее скрыть за общим сообщением нельзя —
+            // Текст ошибки Firebird нельзя скрывать за общим сообщением —
             // модель чинит SQL именно по тексту ошибки (SQLCODE/GDSC).
-            logger.error("SQL query error: {}", e.getMessage());
+            logger.error("SQL query error: {} | Query: {}", e.getMessage(), query);
             throw new RuntimeException("SQL error: " + e.getMessage(), e);
         }
+    }
+
+    /** Первые слова запроса — чтобы агент увидел, что именно он прислал. */
+    private static String firstWords(String query) {
+        String flat = query.replaceAll("\\s+", " ").trim();
+        return flat.length() > 60 ? flat.substring(0, 60) + "..." : flat;
     }
 
     private JsonArray createArray(String... items) {

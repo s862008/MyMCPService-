@@ -211,41 +211,86 @@ public class McpServer {
         try {
             return tool.execute(arguments);
         } catch (SecurityException e) {
+            // Отказы валидатора раньше уходили клиенту БЕЗ записи в лог — диагностика
+            // была невозможна. Логируем всегда: и запрос, и причину отказа.
+            logger.warn("Tool '{}' rejected by security policy: {}. Statement: {}",
+                    toolName, e.getMessage(), abbreviate(arguments));
             return toolError(e.getMessage());
         } catch (IllegalArgumentException e) {
+            logger.warn("Tool '{}' called with invalid arguments: {}. Arguments: {}",
+                    toolName, e.getMessage(), abbreviate(arguments));
             return toolError(e.getMessage());
         } catch (Exception e) {
-            logger.error("Tool execution error: {}", toolName, e);
-            return toolError(extractFullError(e));
+            logger.error("Tool execution error: {} (arguments: {})", toolName, abbreviate(arguments), e);
+            return toolError(buildErrorMessage(toolName, e));
         }
+    }
+
+    /** Короткое представление аргументов для лога — чтобы не раздувать файл. */
+    private String abbreviate(JsonObject arguments) {
+        String s = arguments.toString();
+        return s.length() > 500 ? s.substring(0, 500) + "...(truncated)" : s;
+    }
+
+    /**
+     * Формирование текста ошибки для ИИ-агента.
+     *
+     * <p>Агент исправляет SQL только по тексту ошибки, поэтому сообщение должно
+     * содержать: (1) что именно сломалось, (2) полную цепочку причин Firebird
+     * с SQLCODE, (3) готовую подсказку «что делать дальше».</p>
+     */
+    private String buildErrorMessage(String toolName, Throwable e) {
+        String details = extractFullError(e);
+        String hint = SqlSafety.hintFor(details);
+        StringBuilder sb = new StringBuilder();
+        sb.append(toolName).append(" failed.\n");
+        sb.append("Reason: ").append(details).append('\n');
+        if (hint != null) {
+            sb.append("Hint: ").append(hint);
+        }
+        return sb.toString();
     }
 
     /**
      * Извлечение полного текста ошибки из SQLException (включая вложенные причины и SQLCODE).
-     * Для Firebird это критично — основная ошибка часто лежит в cause.
+     *
+     * <p>Для Firebird это критично — содержательная часть часто лежит в cause
+     * («Column unknown; PD.NAME; At line 1, column 65»), а верхний уровень содержит
+     * лишь «Dynamic SQL Error». Цепочка cause повторяет одни и те же фразы, поэтому
+     * сегменты дедуплицируются — иначе агент читает один и тот же текст трижды
+     * и не видит главного.</p>
      */
     private String extractFullError(Throwable e) {
-        StringBuilder sb = new StringBuilder();
+        // LinkedHashSet: порядок важен (верхний уровень -> причина), дубликаты не нужны
+        java.util.LinkedHashSet<String> parts = new java.util.LinkedHashSet<>();
         Throwable current = e;
         while (current != null) {
             String msg = current.getMessage();
             if (msg != null && !msg.trim().isEmpty()) {
-                sb.append(msg);
+                parts.add(msg.trim());
             }
-            // Добавляем SQLCODE если доступен
             if (current instanceof java.sql.SQLException) {
-                int sqlCode = ((java.sql.SQLException) current).getErrorCode();
-                if (sqlCode != 0) {
-                    sb.append("; SQLCODE=").append(sqlCode);
+                java.sql.SQLException sqlEx = (java.sql.SQLException) current;
+                if (sqlEx.getErrorCode() != 0) {
+                    parts.add("SQLCODE=" + sqlEx.getErrorCode());
+                }
+                String state = sqlEx.getSQLState();
+                if (state != null && !state.trim().isEmpty()) {
+                    parts.add("SQLState=" + state);
                 }
             }
             current = current.getCause();
-            if (current != null && current != e) {
-                sb.append(" -> ");
-            }
         }
-        // Префикс: имя инструмента и тип ошибки
-        return e.getClass().getSimpleName() + ": " + sb.toString();
+
+        StringBuilder sb = new StringBuilder();
+        for (String part : parts) {
+            if (sb.length() > 0) sb.append(" | ");
+            sb.append(part);
+        }
+        if (sb.length() == 0) {
+            sb.append(e.getClass().getSimpleName());
+        }
+        return sb.toString();
     }
 
     /** Формат ошибки инструмента: content[].text + isError=true. */

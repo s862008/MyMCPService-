@@ -71,10 +71,14 @@ public class SqlWriteTool implements Tool {
 
         String query = arguments.get("query").getAsString().trim();
 
-        // SELECT отправляем в sql_query — разделение read/write делает аудит понятным
-        if (query.toUpperCase().startsWith("SELECT")) {
-            throw new SecurityException("SELECT queries should be executed via sql_query tool. " +
-                    "Use sql_execute for write operations (INSERT, UPDATE, DELETE, CREATE, etc.).");
+        // SELECT отправляем в sql_query — разделение read/write делает аудит понятным.
+        // Сообщение адресовано ИИ-агенту: он должен сразу понять, какой инструмент звать.
+        String head = query.toUpperCase();
+        if (head.startsWith("SELECT") || head.startsWith("WITH")) {
+            throw new SecurityException(
+                    "sql_execute accepts write statements only, but received a read query. " +
+                    "Call the sql_query tool instead with the same query text. " +
+                    "sql_execute is for INSERT, UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, EXECUTE.");
         }
 
         // Единый валидатор: множественные инструкции, комментарии, инъекции,
@@ -98,7 +102,7 @@ public class SqlWriteTool implements Tool {
             return response;
 
         } catch (SQLException e) {
-            logger.error("SQL execute error: {}", e.getMessage());
+            logger.error("SQL execute error: {} | Statement: {}", e.getMessage(), query);
             throw new RuntimeException("SQL error: " + e.getMessage(), e);
         }
     }
