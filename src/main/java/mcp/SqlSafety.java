@@ -131,8 +131,7 @@ public final class SqlSafety {
             throw new SecurityException(
                     "DDL statements (CREATE/ALTER/DROP) are disabled by [security] block_ddl=true " +
                     "in mcp-config.ini. Set block_ddl=false to allow schema changes.");
-        }
-    }
+        }    }
 
     /** Проверка имени объекта для подстановки в SQL-литерал (describe_table и т.п.). */
     public static String safeObjectName(String name, String kind) {
@@ -404,73 +403,99 @@ public final class SqlSafety {
         if (errorText == null) return null;
         String t = errorText.toLowerCase();
 
+        // Извлекаем Firebird SQLCODE из текста вида "SQL error code = -104".
+        // Текстовые проверки типа "sqlcode=-104" не работали: реальный формат —
+        // "SQL error code = -104" (с пробелами), поэтому сверяемся по числу.
+        int sqlCode = extractFirebirdSqlCode(t);
+
         // -206 Column unknown
-        if (t.contains("column unknown") || t.contains("sqlcode=-206")) {
-            return "Колонка не существует. Вызовите sql_describe_table для каждой таблицы "
-                 + "из запроса и используйте ТОЛЬКО реальные имена колонок. Не угадывайте имена.";
+        if (t.contains("column unknown") || sqlCode == -206) {
+            return "Column does not exist. Call sql_describe_table for every table used in the query "
+                 + "and reference ONLY real column names from its output. Do not guess column names.";
         }
         // -204 Table unknown
-        if (t.contains("table unknown") || t.contains("sqlcode=-204")) {
-            return "Таблица/представление не существует. Вызовите sql_list_tables "
-                 + "и используйте точное имя из результата (в Firebird по умолчанию ВЕРХНИЙ регистр).";
+        if (t.contains("table unknown") || sqlCode == -204) {
+            return "Table or view does not exist. Call sql_list_tables and use an exact name "
+                 + "from its result (Firebird object names are UPPER_CASE by default unless quoted).";
         }
         // -104 / -105 syntax
-        if (t.contains("sqlcode=-104") || t.contains("invalid token")
-                || t.contains("sqlcode=-105") || t.contains("unexpected end of command")) {
-            return "Синтаксическая ошибка. Частые причины в Firebird: нет LIMIT (используйте FIRST n), "
-                 + "нет IF NOT EXISTS, нет CURRENT_DATE в диалекте 1 (используйте CURRENT_TIMESTAMP). "
-                 + "Проверьте запрос через sql_explain.";
+        if (sqlCode == -104 || sqlCode == -105 || t.contains("invalid token")
+                || t.contains("unexpected end of command")) {
+            return "Syntax error. Common Firebird pitfalls: no LIMIT (use FIRST n), "
+                 + "no CREATE TABLE IF NOT EXISTS, no CURRENT_DATE in SQL dialect 1 "
+                 + "(use CURRENT_TIMESTAMP). Validate the fixed statement with sql_explain before re-running.";
         }
         // -303 / -305 conversion
-        if (t.contains("sqlcode=-303") || t.contains("conversion error")
-                || t.contains("sqlcode=-305") || t.contains("arithmetic exception")) {
-            return "Ошибка преобразования типов. Сверьте типы через sql_describe_table: "
-                 + "числовые колонки сравнивайте без кавычек, строковые — в одинарных кавычках, "
-                 + "даты — как DATE '2026-01-01' или CAST(...).";
+        if (sqlCode == -303 || t.contains("conversion error")
+                || sqlCode == -305 || t.contains("arithmetic exception")) {
+            return "Data type conversion error. Check column types via sql_describe_table: "
+                 + "compare numeric columns without quotes, string literals in single quotes, "
+                 + "dates as DATE '2026-01-01' or CAST(...).";
         }
         // -802 uniqueness / constraint
-        if (t.contains("sqlcode=-802") || t.contains("violation of primary or unique key")) {
-            return "Нарушение PRIMARY KEY / UNIQUE — такое значение уже есть. "
-                 + "Проверьте существующие записи через sql_query перед INSERT.";
+        if (sqlCode == -802 || t.contains("violation of primary or unique key")) {
+            return "PRIMARY KEY / UNIQUE violation — the value already exists. "
+                 + "Check existing rows with sql_query before INSERT, or use a generated key.";
         }
         // -803 / -625 foreign key
-        if (t.contains("sqlcode=-803") || t.contains("foreign key")
-                || t.contains("sqlcode=-625") || t.contains("partner key")) {
-            return "Нарушение внешнего ключа: ссылка на несуществующую родительскую запись "
-                 + "или удаление записи, на которую ссылаются. Проверьте справочную таблицу.";
+        if (sqlCode == -803 || t.contains("foreign key")
+                || sqlCode == -625 || t.contains("partner key")) {
+            return "Foreign key violation: the referenced parent row does not exist, or you are "
+                 + "deleting/updating a row that is still referenced. Check the lookup table first.";
         }
         // NOT NULL
-        if (t.contains("sqlcode=-625") || t.contains("validation error for column")
+        if (sqlCode == -625 || t.contains("validation error for column")
                 || t.contains("attempt to store null")) {
-            return "Попытка записать NULL в колонку NOT NULL. "
-                 + "Проверьте структуру через sql_describe_table и заполните обязательные поля.";
+            return "NULL stored into a NOT NULL column. Inspect the structure with sql_describe_table "
+                 + "and provide values for all required columns.";
         }
         // already exists
         if (t.contains("already exists")) {
-            return "Объект уже существует. Используйте CREATE OR ALTER (для процедур/триггеров/"
-                 + "представлений) или ALTER TABLE (для колонок) вместо повторного CREATE.";
+            return "Object already exists. Use CREATE OR ALTER (procedures/triggers/views) "
+                 + "or ALTER TABLE (columns) instead of repeating CREATE.";
         }
         // object in use
         if (t.contains("object") && t.contains("is in use")) {
-            return "Объект занят активным запросом. Повторите операцию после завершения "
-                 + "параллельного соединения (или перезапустите сервер приложения).";
+            return "Object is in use by an active request. Retry after the concurrent connection "
+                 + "finishes (or restart the application holding it open).";
         }
         // deadlock / lock conflict
         if (t.contains("deadlock") || t.contains("lock conflict")
                 || t.contains("update conflicts with concurrent update")) {
-            return "Конфликт блокировок: запись изменяется параллельно. Повторите запрос; "
-                 + "если повторяется — работайте с другой строкой или сократите транзакцию.";
+            return "Lock conflict: the row is being changed concurrently. Retry the statement; "
+                 + "if it repeats, touch a different row or shorten the transaction.";
         }
         // timeout
         if (t.contains("timeout") || t.contains("cancelled")) {
-            return "Запрос прерван по таймауту (query_timeout_sec). Упростите запрос, "
-                 + "добавьте FIRST n и условия WHERE по индексированным колонкам.";
+            return "Query was cancelled by the server timeout (query_timeout_sec). Simplify it, "
+                 + "add FIRST n and WHERE conditions on indexed columns.";
         }
         // permissions
         if (t.contains("no permission") || t.contains("insufficient privileges")) {
-            return "Недостаточно прав у пользователя БД. Операцию должен выполнить "
-                 + "пользователь с соответствующими привилегиями (GRANT).";
+            return "Insufficient database privileges for this operation. It must be run by a user "
+                 + "with the required GRANTs, or grant them to the current user.";
         }
         return null;
     }
+
+    /**
+     * Извлечение Firebird SQLCODE из текста ошибки вида
+     * «Dynamic SQL Error; SQL error code = -206; ...».
+     *
+     * @return отрицательный SQLCODE или 0, если не найден
+     */
+    private static int extractFirebirdSqlCode(String lowerText) {
+        java.util.regex.Matcher m = FIREBIRD_SQLCODE_PATTERN.matcher(lowerText);
+        if (m.find()) {
+            try {
+                return Integer.parseInt(m.group(1));
+            } catch (NumberFormatException ignored) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    private static final java.util.regex.Pattern FIREBIRD_SQLCODE_PATTERN =
+            java.util.regex.Pattern.compile("sql error code\\s*=\\s*(-?\\d+)");
 }

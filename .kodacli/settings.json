@@ -1,0 +1,8 @@
+{
+  "skills": {
+    "disabled": [
+      "firebird4-mcp-server",
+      "firebird5-mcp-server"
+    ]
+  }
+}
