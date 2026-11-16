@@ -44,6 +44,12 @@ public class McpServer {
     /** Реестр инструментов: имя -> реализация. ConcurrentHashMap — потоки HTTP общие. */
     private final Map<String, Tool> tools = new ConcurrentHashMap<>();
 
+    /**
+     * Готовый результат tools/list: определения неизменяемы, пересобирать их
+     * на каждый запрос смысла нет (экономия ~12 JsonObject на вызов).
+     */
+    private volatile JsonObject toolsListResult;
+
     /** Единая точка доступа к Firebird (создает соединения по требованию). */
     private final FirebirdDb db;
 
@@ -75,6 +81,15 @@ public class McpServer {
         // --- Объекты БД (обёртки DDL) ---
         tools.put("sql_create_view", new SqlCreateViewTool(this));
         tools.put("sql_create_trigger", new SqlCreateTriggerTool(this));
+
+        // Один раз собираем определения для tools/list (см. toolsListResult)
+        JsonObject result = new JsonObject();
+        JsonArray toolsArray = new JsonArray();
+        for (Map.Entry<String, Tool> entry : tools.entrySet()) {
+            toolsArray.add(entry.getValue().getToolDefinition());
+        }
+        result.add("tools", toolsArray);
+        toolsListResult = result;
     }
 
     /**
@@ -173,17 +188,9 @@ public class McpServer {
         return result;
     }
 
-    /** tools/list: собираем определения всех инструментов (name + description + inputSchema). */
+    /** tools/list: отдаём закэшированные определения (собираются один раз при регистрации). */
     private JsonObject handleToolsList() {
-        JsonObject result = new JsonObject();
-        JsonArray toolsArray = new JsonArray();
-
-        for (Map.Entry<String, Tool> entry : tools.entrySet()) {
-            toolsArray.add(entry.getValue().getToolDefinition());
-        }
-
-        result.add("tools", toolsArray);
-        return result;
+        return toolsListResult;
     }
 
     /**

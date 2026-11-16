@@ -1,8 +1,9 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
-import mcp.SqlSafety;
+import mcp.db.FbTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -17,7 +18,8 @@ import java.util.Map;
  * передать параметры в правильном порядке и типе.</p>
  *
  * <p>Источник — RDB$PROCEDURE_PARAMETERS + RDB$FIELDS.
- * RDB$PARAMETER_TYPE: 0 = входной, 1 = выходной.</p>
+ * RDB$PARAMETER_TYPE: 0 = входной, 1 = выходной.
+ * CASE-шаблон типов общий с describe_table (см. {@link FbTypes}).</p>
  *
  * <p>Пример вызова:</p>
  * <pre>{@code
@@ -41,50 +43,23 @@ public class SqlDescribeProcedureTool implements Tool {
         definition.addProperty("description", "Describe a stored procedure: input and output parameters " +
                 "with names, types and positions. Use this BEFORE sql_execute_procedure to know what " +
                 "arguments to pass. Procedure names are UPPER_CASE by default.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-        JsonObject procParam = new JsonObject();
-        procParam.addProperty("type", "string");
-        procParam.addProperty("description", "Procedure name (e.g. 'P_GET_USER')");
-        properties.add("procedure", procParam);
-
-        inputSchema.add("properties", properties);
-        JsonArray required = new JsonArray();
-        required.add("procedure");
-        inputSchema.add("required", required);
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("procedure", "Procedure name (e.g. 'P_GET_USER')")
+                .required("procedure")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("procedure")) {
-            throw new IllegalArgumentException("Missing required parameter: procedure");
-        }
-
         // Имя подставляется в SQL-литерал конкатенацией — обязательна строгая валидация
-        String proc = SqlSafety.safeObjectName(arguments.get("procedure").getAsString(), "procedure");
+        String proc = Args.requireObjectName(arguments, "procedure");
 
-        // Тот же CASE по RDB$FIELD_TYPE, что и в describe_table — единое представление типов.
-        // DECIMAL/NUMERIC в FB3 имеют код 27 (как DOUBLE) — различаются по scale != 0.
         String sql =
                 "SELECT " +
                 "  pp.RDB$PARAMETER_NAME AS P_NAME, " +
                 "  pp.RDB$PARAMETER_TYPE AS P_TYPE, " +
-                "  CASE " +
-                "    WHEN f.RDB$FIELD_TYPE = 27 AND f.RDB$FIELD_SCALE != 0 THEN 'DECIMAL' " +
-                "    WHEN f.RDB$FIELD_TYPE = 27 THEN 'DOUBLE PRECISION' " +
-                "    WHEN f.RDB$FIELD_TYPE = 7 THEN 'SMALLINT' WHEN f.RDB$FIELD_TYPE = 8 THEN 'INTEGER' " +
-                "    WHEN f.RDB$FIELD_TYPE = 10 THEN 'FLOAT' WHEN f.RDB$FIELD_TYPE = 12 THEN 'DATE' " +
-                "    WHEN f.RDB$FIELD_TYPE = 13 THEN 'TIME' WHEN f.RDB$FIELD_TYPE = 14 THEN 'CHAR' " +
-                "    WHEN f.RDB$FIELD_TYPE = 16 THEN 'BIGINT' WHEN f.RDB$FIELD_TYPE = 23 THEN 'BOOLEAN' " +
-                "    WHEN f.RDB$FIELD_TYPE = 26 THEN 'QUAD' WHEN f.RDB$FIELD_TYPE = 35 THEN 'TIMESTAMP' " +
-                "    WHEN f.RDB$FIELD_TYPE = 37 THEN 'VARCHAR' WHEN f.RDB$FIELD_TYPE = 40 THEN 'BLOB' " +
-                "    ELSE 'TYPE_' || f.RDB$FIELD_TYPE END AS P_DTYPE, " +
+                "  " + FbTypes.TYPE_CASE_SQL + " AS P_DTYPE, " +
                 "  f.RDB$FIELD_LENGTH AS P_LEN, " +
                 "  CASE WHEN f.RDB$FIELD_TYPE = 27 AND f.RDB$FIELD_SCALE != 0 THEN " +
                 "       COALESCE(NULLIF(f.RDB$FIELD_PRECISION, 0), " +
@@ -99,10 +74,7 @@ public class SqlDescribeProcedureTool implements Tool {
 
         try {
             Map<String, Object> result = server.getDb().executeQuery(sql);
-
-            @SuppressWarnings("unchecked")
-            java.util.List<Map<String, Object>> rows =
-                    (java.util.List<Map<String, Object>>) result.get("rows");
+            java.util.List<Map<String, Object>> rows = ToolSupport.rowsOf(result);
 
             if (rows == null || rows.isEmpty()) {
                 throw new RuntimeException("Procedure not found: " + proc +
@@ -114,58 +86,21 @@ public class SqlDescribeProcedureTool implements Tool {
             StringBuilder sb = new StringBuilder("Procedure " + proc + ":\n");
 
             for (Map<String, Object> row : rows) {
-                String name = str(row.get("P_NAME"));
-                String type = renderType(row);
+                String name = ToolSupport.str(row.get("P_NAME"));
+                String type = FbTypes.renderType(row, "P_DTYPE", "P_LEN", "P_PREC", "P_SCALE");
                 boolean isInput = ((Number) row.get("P_TYPE")).intValue() == 0;
 
-                JsonObject p = new JsonObject();
-                p.addProperty("name", name);
-                p.addProperty("type", type);
+                JsonObject p = ToolSupport.obj().put("name", name).put("type", type).build();
                 (isInput ? inputs : outputs).add(p);
 
                 sb.append(isInput ? "  IN  " : "  OUT ").append(name).append("  ").append(type).append("\n");
             }
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            JsonObject json = new JsonObject();
-            json.add("input", inputs);
-            json.add("output", outputs);
-            textContent.addProperty("text", sb.toString() + "\nJSON:\n" + json.toString());
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-            return response;
+            JsonObject json = ToolSupport.obj().put("input", inputs).put("output", outputs).build();
+            return ToolSupport.ok(sb + "\nJSON:\n" + json);
 
         } catch (SQLException e) {
-            logger.error("Describe procedure error: {} | Procedure: {}", e.getMessage(), proc);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "Describe procedure error", "Procedure: " + proc, e);
         }
-    }
-
-    /** Сборка читаемого имени типа из кода + длины/precision/scale. */
-    private static String renderType(Map<String, Object> row) {
-        String type = str(row.get("P_DTYPE"));
-        Object len = row.get("P_LEN");
-        Object prec = row.get("P_PREC");
-        Object scaleObj = row.get("P_SCALE");
-        int scale = scaleObj == null ? 0 : ((Number) scaleObj).intValue();
-
-        if (type.equals("CHAR") || type.equals("VARCHAR")) {
-            return type + "(" + len + ")";
-        }
-        if ((type.equals("DOUBLE PRECISION") || type.equals("FLOAT"))) {
-            return type;
-        }
-        if (prec != null && scale < 0) {
-            return type + "(" + prec + "," + (-scale) + ")";
-        }
-        return type;
-    }
-
-    private static String str(Object o) {
-        return o == null ? null : o.toString().trim();
     }
 }

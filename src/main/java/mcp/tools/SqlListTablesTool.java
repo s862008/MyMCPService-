@@ -1,6 +1,7 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,13 +34,8 @@ public class SqlListTablesTool implements Tool {
         definition.addProperty("name", "sql_list_tables");
         definition.addProperty("description", "List all user tables in the Firebird database " +
                 "(reads RDB$RELATIONS, system tables are excluded). No parameters required.");
-
-        // Схема без параметров — пустые properties обязателны по JSON Schema
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-        inputSchema.add("properties", new JsonObject());
-
-        definition.add("inputSchema", inputSchema);
+        // Схема без параметров — пустые properties обязательны по JSON Schema
+        definition.add("inputSchema", new ToolSupport.Schema().build());
         return definition;
     }
 
@@ -53,39 +49,12 @@ public class SqlListTablesTool implements Tool {
 
         try {
             Map<String, Object> result = server.getDb().executeQuery(sql);
+            JsonArray tables = ToolSupport.columnValues(ToolSupport.rowsOf(result), "RDB$RELATION_NAME");
 
-            @SuppressWarnings("unchecked")
-            java.util.List<Map<String, Object>> rows =
-                    (java.util.List<Map<String, Object>>) result.get("rows");
-
-            JsonArray tables = new JsonArray();
-            if (rows != null) {
-                for (Map<String, Object> row : rows) {
-                    Object name = row.get("RDB$RELATION_NAME");
-                    if (name != null) {
-                        // Имена в диалекте 1 padding'ятся пробелами до ширины CHAR поля
-                        tables.add(name.toString().trim());
-                    }
-                }
-            }
-
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text",
-                    "Tables in database (" + tables.size() + "):\n" + tables.toString());
-
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-
-            return response;
+            return ToolSupport.ok("Tables in database (" + tables.size() + "):\n" + tables);
 
         } catch (SQLException e) {
-            logger.error("List tables error: {}", e.getMessage());
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "List tables error", sql, e);
         }
     }
 }

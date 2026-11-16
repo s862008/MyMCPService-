@@ -1,6 +1,6 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
@@ -52,72 +52,27 @@ public class SqlCreateTriggerTool implements Tool {
                 "(SQL dialect 1). Uses CREATE OR ALTER. In the body use NEW.column / OLD.column to access " +
                 "row values. For BEFORE INSERT generation of IDs use GEN_ID(generator, 1). " +
                 "Body should contain statements WITHOUT BEGIN/END.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-
-        JsonObject nameParam = new JsonObject();
-        nameParam.addProperty("type", "string");
-        nameParam.addProperty("description", "Trigger name");
-        properties.add("name", nameParam);
-
-        JsonObject tableParam = new JsonObject();
-        tableParam.addProperty("type", "string");
-        tableParam.addProperty("description", "Target table name");
-        properties.add("table", tableParam);
-
-        JsonObject timingParam = new JsonObject();
-        timingParam.addProperty("type", "string");
-        timingParam.addProperty("description", "Trigger timing: BEFORE or AFTER");
-        JsonArray timingEnum = new JsonArray();
-        for (String t : TIMINGS) timingEnum.add(t);
-        timingParam.add("enum", timingEnum);
-        properties.add("timing", timingParam);
-
-        JsonObject eventParam = new JsonObject();
-        eventParam.addProperty("type", "string");
-        eventParam.addProperty("description", "Trigger event: INSERT, UPDATE or DELETE");
-        JsonArray eventEnum = new JsonArray();
-        for (String e : EVENTS) eventEnum.add(e);
-        eventParam.add("enum", eventEnum);
-        properties.add("event", eventParam);
-
-        JsonObject bodyParam = new JsonObject();
-        bodyParam.addProperty("type", "string");
-        bodyParam.addProperty("description", "Trigger body statements (without BEGIN/END)");
-        properties.add("body", bodyParam);
-
-        inputSchema.add("properties", properties);
-        JsonArray required = new JsonArray();
-        required.add("name");
-        required.add("table");
-        required.add("event");
-        required.add("body");
-        inputSchema.add("required", required);
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("name", "Trigger name")
+                .str("table", "Target table name")
+                .enumStr("timing", "Trigger timing: BEFORE or AFTER", TIMINGS)
+                .enumStr("event", "Trigger event: INSERT, UPDATE or DELETE", EVENTS)
+                .str("body", "Trigger body statements (without BEGIN/END)")
+                .required("name", "table", "event", "body")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("name")) throw new IllegalArgumentException("Missing required parameter: name");
-        if (!arguments.has("table")) throw new IllegalArgumentException("Missing required parameter: table");
-        if (!arguments.has("event")) throw new IllegalArgumentException("Missing required parameter: event");
-        if (!arguments.has("body")) throw new IllegalArgumentException("Missing required parameter: body");
+        Args.require(arguments, "name", "table", "event", "body");
 
-        String name = arguments.get("name").getAsString().trim();
-        String table = arguments.get("table").getAsString().trim();
-        String event = arguments.get("event").getAsString().trim().toUpperCase();
+        String name = Args.requireObjectName(arguments, "name");
+        String table = Args.requireObjectName(arguments, "table");
+        String event = Args.requireString(arguments, "event").toUpperCase();
         String timing = arguments.has("timing")
-                ? arguments.get("timing").getAsString().trim().toUpperCase() : "AFTER";
-        String body = arguments.get("body").getAsString().trim();
-
-        // Имена идут в DDL без кавычек — только безопасные идентификаторы
-        name = SqlSafety.safeObjectName(name, "trigger");
-        table = SqlSafety.safeObjectName(table, "table");
+                ? Args.requireString(arguments, "timing").toUpperCase() : "AFTER";
+        String body = Args.requireString(arguments, "body");
 
         // Тело — PSQL-код внутри AS BEGIN ... END: множественные ';' здесь норма,
         // поэтому validatePsqlBody (без проверки единственности инструкции).
@@ -145,20 +100,11 @@ public class SqlCreateTriggerTool implements Tool {
         try {
             server.getDb().executeUpdate(sql.toString());
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text",
-                    "Trigger '" + name + "' created successfully on " + table + ".\nGenerated SQL:\n" + sql);
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-            return response;
+            return ToolSupport.ok("Trigger '" + name + "' created successfully on " + table +
+                    ".\nGenerated SQL:\n" + sql);
 
         } catch (SQLException e) {
-            logger.error("Trigger creation error: {} | SQL: {}", e.getMessage(), sql);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "Trigger creation error", "SQL: " + sql, e);
         }
     }
 }

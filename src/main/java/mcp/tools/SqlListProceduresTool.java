@@ -1,6 +1,7 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,12 +33,7 @@ public class SqlListProceduresTool implements Tool {
         definition.addProperty("name", "sql_list_procedures");
         definition.addProperty("description", "List all stored procedures in the Firebird database " +
                 "(reads RDB$PROCEDURES). No parameters required.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-        inputSchema.add("properties", new JsonObject());
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema().build());
         return definition;
     }
 
@@ -47,39 +43,12 @@ public class SqlListProceduresTool implements Tool {
 
         try {
             Map<String, Object> result = server.getDb().executeQuery(sql);
+            JsonArray procedures = ToolSupport.columnValues(ToolSupport.rowsOf(result), "RDB$PROCEDURE_NAME");
 
-            @SuppressWarnings("unchecked")
-            java.util.List<Map<String, Object>> rows =
-                    (java.util.List<Map<String, Object>>) result.get("rows");
-
-            JsonArray procedures = new JsonArray();
-            if (rows != null) {
-                for (Map<String, Object> row : rows) {
-                    Object name = row.get("RDB$PROCEDURE_NAME");
-                    if (name != null) {
-                        // Trim против CHAR-padding имён в диалекте 1
-                        procedures.add(name.toString().trim());
-                    }
-                }
-            }
-
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text",
-                    "Stored procedures in database (" + procedures.size() + "):\n" + procedures.toString());
-
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-
-            return response;
+            return ToolSupport.ok("Stored procedures in database (" + procedures.size() + "):\n" + procedures);
 
         } catch (SQLException e) {
-            logger.error("List procedures error: {}", e.getMessage());
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "List procedures error", sql, e);
         }
     }
 }

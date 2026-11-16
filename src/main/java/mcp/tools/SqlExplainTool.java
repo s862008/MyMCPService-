@@ -1,13 +1,12 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.sql.SQLException;
-import java.util.Map;
 
 /**
  * Инструмент sql_explain — валидация SELECT + получение плана выполнения.
@@ -42,32 +41,16 @@ public class SqlExplainTool implements Tool {
                 "(wraps it in 'WHERE 1=0') and fetch the Firebird execution plan from MON$REQUESTS/MON$STATEMENTS " +
                 "monitoring tables. Use to check syntax, verify object names, and inspect which indexes " +
                 "the optimizer picks. Errors report exactly what is wrong with the SQL.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-        JsonObject queryParam = new JsonObject();
-        queryParam.addProperty("type", "string");
-        queryParam.addProperty("description", "SELECT statement to validate and explain");
-        properties.add("query", queryParam);
-
-        inputSchema.add("properties", properties);
-        JsonArray required = new JsonArray();
-        required.add("query");
-        inputSchema.add("required", required);
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("query", "SELECT statement to validate and explain")
+                .required("query")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("query")) {
-            throw new IllegalArgumentException("Missing required parameter: query");
-        }
-
-        String query = arguments.get("query").getAsString().trim();
+        String query = Args.requireString(arguments, "query");
         if (!query.toUpperCase().startsWith("SELECT")) {
             throw new SecurityException("sql_explain supports SELECT statements only");
         }
@@ -117,10 +100,6 @@ public class SqlExplainTool implements Tool {
 
             conn.rollback(); // обёртка не должна ничего зафиксировать
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
             StringBuilder sb = new StringBuilder();
             sb.append("SQL is VALID: statement parsed and objects resolved successfully.\n");
             if (plan != null && !plan.trim().isEmpty()) {
@@ -128,11 +107,7 @@ public class SqlExplainTool implements Tool {
             } else {
                 sb.append("\nExecution plan is not available (MON$ monitoring requires SYSDBA or grants).");
             }
-            textContent.addProperty("text", sb.toString());
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-            return response;
+            return ToolSupport.ok(sb.toString());
 
         } catch (SQLException e) {
             // Ошибка синтаксиса/семантики — именно то, ради чего инструмент вызывается

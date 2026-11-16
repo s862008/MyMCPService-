@@ -1,6 +1,6 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
@@ -25,7 +25,6 @@ import java.util.Map;
 public class SqlWriteTool implements Tool {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlWriteTool.class);
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private final McpServer server;
 
@@ -46,30 +45,16 @@ public class SqlWriteTool implements Tool {
                 "This tool is also the universal fallback when a specialized tool is unavailable. " +
                 "Changes are committed immediately. " +
                 "IMPORTANT: DDL operations cannot be rolled back.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-        JsonObject queryParam = new JsonObject();
-        queryParam.addProperty("type", "string");
-        queryParam.addProperty("description", "SQL write statement to execute");
-        properties.add("query", queryParam);
-
-        inputSchema.add("properties", properties);
-        inputSchema.add("required", createArray("query"));
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("query", "SQL write statement to execute")
+                .required("query")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("query")) {
-            throw new IllegalArgumentException("Missing required parameter: query");
-        }
-
-        String query = arguments.get("query").getAsString().trim();
+        String query = Args.requireString(arguments, "query");
 
         // SELECT отправляем в sql_query — разделение read/write делает аудит понятным.
         // Сообщение адресовано ИИ-агенту: он должен сразу понять, какой инструмент звать.
@@ -87,32 +72,11 @@ public class SqlWriteTool implements Tool {
 
         try {
             Map<String, Object> result = server.getDb().executeUpdate(query);
-
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text", GSON.toJson(result)); // success/rowsAffected/...
-
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-
-            return response;
+            return ToolSupport.okJson(result); // success/rowsAffected/...
 
         } catch (SQLException e) {
             // Без префикса: структурированный ответ формирует McpServer (Reason + Hint).
-            logger.error("SQL execute error: {} | Statement: {}", e.getMessage(), query);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "SQL execute error", "Statement: " + query, e);
         }
-    }
-
-    private JsonArray createArray(String... items) {
-        JsonArray array = new JsonArray();
-        for (String item : items) {
-            array.add(item);
-        }
-        return array;
     }
 }

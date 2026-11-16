@@ -1,6 +1,6 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
@@ -43,45 +43,22 @@ public class SqlCreateViewTool implements Tool {
         definition.addProperty("description", "Create or replace a view in the Firebird 3 database " +
                 "(SQL dialect 1). Uses CREATE OR ALTER, so re-running replaces the existing view. " +
                 "The query must be a SELECT statement. Column aliases in the SELECT define view column names.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-
-        JsonObject nameParam = new JsonObject();
-        nameParam.addProperty("type", "string");
-        nameParam.addProperty("description", "View name (letters, digits, underscore, $)");
-        properties.add("name", nameParam);
-
-        JsonObject queryParam = new JsonObject();
-        queryParam.addProperty("type", "string");
-        queryParam.addProperty("description", "SELECT statement that defines the view (without trailing semicolon)");
-        properties.add("query", queryParam);
-
-        inputSchema.add("properties", properties);
-        JsonArray required = new JsonArray();
-        required.add("name");
-        required.add("query");
-        inputSchema.add("required", required);
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("name", "View name (letters, digits, underscore, $)")
+                .str("query", "SELECT statement that defines the view (without trailing semicolon)")
+                .required("name", "query")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("name")) {
-            throw new IllegalArgumentException("Missing required parameter: name");
-        }
-        if (!arguments.has("query")) {
-            throw new IllegalArgumentException("Missing required parameter: query");
-        }
+        Args.require(arguments, "name", "query");
 
-        String query = arguments.get("query").getAsString().trim();
+        String query = Args.requireString(arguments, "query");
 
         // Имя идёт в DDL без кавычек — только безопасный идентификатор
-        String name = SqlSafety.safeObjectName(arguments.get("name").getAsString(), "view");
+        String name = Args.requireObjectName(arguments, "name");
 
         if (!query.toUpperCase().startsWith("SELECT")) {
             throw new SecurityException("View definition must be a SELECT statement");
@@ -100,20 +77,10 @@ public class SqlCreateViewTool implements Tool {
         try {
             server.getDb().executeUpdate(sql);
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text",
-                    "View '" + name + "' created successfully.\nGenerated SQL:\n" + sql);
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-            return response;
+            return ToolSupport.ok("View '" + name + "' created successfully.\nGenerated SQL:\n" + sql);
 
         } catch (SQLException e) {
-            logger.error("View creation error: {} | SQL: {}", e.getMessage(), sql);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "View creation error", "SQL: " + sql, e);
         }
     }
 }

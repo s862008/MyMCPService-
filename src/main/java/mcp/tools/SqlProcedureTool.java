@@ -1,6 +1,6 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
@@ -53,62 +53,26 @@ public class SqlProcedureTool implements Tool {
         definition.addProperty("description", "Create (or replace) a stored procedure in the Firebird 3 database " +
                 "(SQL dialect 1). Uses CREATE OR ALTER, so re-running replaces the existing procedure. " +
                 "Body should contain SQL statements WITHOUT the surrounding BEGIN/END.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-
-        // Имя процедуры
-        JsonObject nameParam = new JsonObject();
-        nameParam.addProperty("type", "string");
-        nameParam.addProperty("description", "Procedure name (letters, digits, underscore, $)");
-        properties.add("name", nameParam);
-
-        // Входные параметры — строка объявления целиком
-        JsonObject paramsParam = new JsonObject();
-        paramsParam.addProperty("type", "string");
-        paramsParam.addProperty("description",
-                "Input parameters declaration, e.g. 'IN_ID INTEGER, IN_NAME VARCHAR(50)'. Optional.");
-        properties.add("parameters", paramsParam);
-
-        // Выходные параметры (для возвращающих процедур)
-        JsonObject returnsParam = new JsonObject();
-        returnsParam.addProperty("type", "string");
-        returnsParam.addProperty("description",
-                "RETURNS declaration, e.g. 'OUT_ID INTEGER'. Optional.");
-        properties.add("returns", returnsParam);
-
-        // Тело — обязательно
-        JsonObject bodyParam = new JsonObject();
-        bodyParam.addProperty("type", "string");
-        bodyParam.addProperty("description", "Procedure body SQL statements (without BEGIN/END)");
-        properties.add("body", bodyParam);
-
-        inputSchema.add("properties", properties);
-        inputSchema.add("required", createArray("name", "body"));
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("name", "Procedure name (letters, digits, underscore, $)")
+                .str("parameters", "Input parameters declaration, e.g. 'IN_ID INTEGER, IN_NAME VARCHAR(50)'. Optional.")
+                .str("returns", "RETURNS declaration, e.g. 'OUT_ID INTEGER'. Optional.")
+                .str("body", "Procedure body SQL statements (without BEGIN/END)")
+                .required("name", "body")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("name")) {
-            throw new IllegalArgumentException("Missing required parameter: name");
-        }
-        if (!arguments.has("body")) {
-            throw new IllegalArgumentException("Missing required parameter: body");
-        }
+        Args.require(arguments, "name", "body");
 
-        String name = SqlSafety.safeObjectName(arguments.get("name").getAsString(), "procedure");
+        String name = Args.requireObjectName(arguments, "name");
         String parameters = SqlSafety.safeParamDeclaration(
-                arguments.has("parameters") ? arguments.get("parameters").getAsString() : "",
-                "parameter");
+                Args.optionalString(arguments, "parameters"), "parameter");
         String returns = SqlSafety.safeParamDeclaration(
-                arguments.has("returns") ? arguments.get("returns").getAsString() : "",
-                "RETURNS");
-        String body = arguments.get("body").getAsString().trim();
+                Args.optionalString(arguments, "returns"), "RETURNS");
+        String body = Args.requireString(arguments, "body");
 
         // Тело идёт внутрь AS BEGIN ... END: множественные ';' допустимы,
         // но комментарии, ?-параметры и паттерны чужих СУБД запрещены.
@@ -138,32 +102,11 @@ public class SqlProcedureTool implements Tool {
         try {
             server.getDb().executeUpdate(sql.toString());
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
             // Возвращаем сгенерированный SQL — модель сможет свериться при ошибке
-            textContent.addProperty("text",
-                    "Procedure '" + name + "' created successfully.\nGenerated SQL:\n" + sql);
-
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-
-            return response;
+            return ToolSupport.ok("Procedure '" + name + "' created successfully.\nGenerated SQL:\n" + sql);
 
         } catch (SQLException e) {
-            logger.error("Procedure creation error: {} | SQL: {}", e.getMessage(), sql);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "Procedure creation error", "SQL: " + sql, e);
         }
-    }
-
-    private JsonArray createArray(String... items) {
-        JsonArray array = new JsonArray();
-        for (String item : items) {
-            array.add(item);
-        }
-        return array;
     }
 }

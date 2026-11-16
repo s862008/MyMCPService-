@@ -1,12 +1,19 @@
 package mcp.tools;
 
-import com.google.gson.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import mcp.McpServer;
 import mcp.SqlSafety;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.*;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -36,7 +43,6 @@ import java.util.Map;
 public class SqlExecuteProcedureTool implements Tool {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlExecuteProcedureTool.class);
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
     private final McpServer server;
 
@@ -52,58 +58,24 @@ public class SqlExecuteProcedureTool implements Tool {
                 "result set (for procedures with RETURNS) or success status (for executable procedures). " +
                 "Call sql_describe_procedure first to get parameter order and types. " +
                 "Parameters are passed positionally as a JSON array; use null for NULL.");
-
-        JsonObject inputSchema = new JsonObject();
-        inputSchema.addProperty("type", "object");
-
-        JsonObject properties = new JsonObject();
-
-        JsonObject procParam = new JsonObject();
-        procParam.addProperty("type", "string");
-        procParam.addProperty("description", "Procedure name (e.g. 'P_GET_USER')");
-        properties.add("procedure", procParam);
-
-        JsonObject paramsParam = new JsonObject();
-        paramsParam.addProperty("type", "array");
-        JsonObject items = new JsonObject();
-        // Типы разные (числа/строки/даты) — anyOf усложняет схемы, оставляем без строгой типизации
-        paramsParam.add("items", items);
-        paramsParam.addProperty("description", "Positional input parameters array (may be empty, may contain null)");
-        properties.add("parameters", paramsParam);
-
-        inputSchema.add("properties", properties);
-        JsonArray required = new JsonArray();
-        required.add("procedure");
-        inputSchema.add("required", required);
-
-        definition.add("inputSchema", inputSchema);
+        definition.add("inputSchema", new ToolSupport.Schema()
+                .str("procedure", "Procedure name (e.g. 'P_GET_USER')")
+                .array("parameters", "Positional input parameters array (may be empty, may contain null)")
+                .required("procedure")
+                .build());
         return definition;
     }
 
     @Override
     public JsonObject execute(JsonObject arguments) {
-        if (!arguments.has("procedure")) {
-            throw new IllegalArgumentException("Missing required parameter: procedure");
-        }
-
         // Имя процедуры идёт в JDBC escape {call ...} — только безопасный идентификатор
-        String proc = SqlSafety.safeObjectName(arguments.get("procedure").getAsString(), "procedure");
+        String proc = Args.requireObjectName(arguments, "procedure");
 
         // Входные параметры: JSON-массив -> Object[]
         List<Object> params = new ArrayList<>();
         if (arguments.has("parameters") && arguments.get("parameters").isJsonArray()) {
             for (JsonElement el : arguments.get("parameters").getAsJsonArray()) {
-                if (el.isJsonNull()) {
-                    params.add(null);
-                } else if (el.getAsJsonPrimitive().isNumber()) {
-                    params.add(el.getAsNumber());
-                } else if (el.getAsJsonPrimitive().isBoolean()) {
-                    // Firebird BOOLEAN (диалект 3) — в диалекте 1 не используется,
-                    // но передаём как 1/0 на случай смешанных баз
-                    params.add(el.getAsBoolean() ? 1 : 0);
-                } else {
-                    params.add(el.getAsString());
-                }
+                params.add(Args.toSqlValue(el));
             }
         }
 
@@ -169,19 +141,10 @@ public class SqlExecuteProcedureTool implements Tool {
                 result.put("message", "Procedure executed successfully (no result set)");
             }
 
-            JsonObject response = new JsonObject();
-            JsonArray content = new JsonArray();
-            JsonObject textContent = new JsonObject();
-            textContent.addProperty("type", "text");
-            textContent.addProperty("text", GSON.toJson(result));
-            content.add(textContent);
-            response.add("content", content);
-            response.addProperty("isError", false);
-            return response;
+            return ToolSupport.okJson(result);
 
         } catch (SQLException e) {
-            logger.error("Procedure execution error: {} | Call: {}", e.getMessage(), sql);
-            throw new RuntimeException(e.getMessage(), e);
+            throw ToolSupport.wrapSql(logger, "Procedure execution error", "Call: " + sql, e);
         }
     }
 }
